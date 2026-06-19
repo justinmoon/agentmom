@@ -49,12 +49,14 @@ deploy-stage:
     sudo systemctl restart agentgranny2
 
     for attempt in $(seq 1 60); do
-      if curl -fsS http://127.0.0.1:7392/api/health; then
-        echo
+      health_json="$(curl -fsS http://127.0.0.1:7392/api/health || true)"
+      if [[ "${health_json}" == *'"commit"'* ]]; then
+        echo "${health_json}"
         break
       fi
       if [[ "${attempt}" == "60" ]]; then
         echo "agentgranny2 health check failed" >&2
+        [[ -n "${health_json}" ]] && echo "${health_json}" >&2
         sudo systemctl status agentgranny2 --no-pager -n 80 >&2 || true
         exit 1
       fi

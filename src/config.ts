@@ -66,7 +66,7 @@ function numberFromEnv(name: string, fallback: number): number {
 
 function readGitCommit(): string | undefined {
   try {
-    return execFileSync("git", ["rev-parse", "--short=12", "HEAD"], {
+    return execFileSync("git", ["-c", `safe.directory=${rootDir}`, "rev-parse", "--short=12", "HEAD"], {
       cwd: rootDir,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"]
