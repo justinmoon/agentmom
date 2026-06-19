@@ -16,14 +16,6 @@ const bridge = new PiBridge(config, previews);
 const isProduction = process.env.NODE_ENV === "production";
 
 let vite: ViteDevServer | undefined;
-if (!isProduction) {
-  vite = await createViteServer({
-    server: { middlewareMode: true },
-    appType: "spa"
-  });
-}
-
-await bridge.init();
 
 const server = createServer(async (req, res) => {
   try {
@@ -205,13 +197,15 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(config.port, config.host, () => {
-  console.log(`agentgranny2 listening on http://${config.host}:${config.port}`);
-  console.log(`workspace=${config.workspace}`);
-  console.log(`agentCwd=${config.agentCwd}`);
-  console.log(`executor=${config.executor}`);
-  console.log(`model=openrouter/${config.openRouterModel}`);
-});
+if (!isProduction) {
+  vite = await createViteServer({
+    server: { middlewareMode: true, hmr: { server } },
+    appType: "spa"
+  });
+}
+
+await bridge.init();
+await startServer();
 
 process.on("SIGINT", () => shutdown());
 process.on("SIGTERM", () => shutdown());
@@ -293,6 +287,51 @@ async function shutdown(): Promise<void> {
   await vite?.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1000).unref();
+}
+
+async function startServer(): Promise<void> {
+  const rawPort = process.env.AGENTGRANNY_PORT?.trim();
+  const explicitPort = rawPort !== undefined && rawPort !== "";
+  try {
+    config.port = await listenOn(config.port);
+  } catch (error) {
+    if (isProduction || explicitPort || !isAddressInUse(error)) throw error;
+
+    console.warn(`port ${config.port} is busy; choosing an ephemeral dev port`);
+    config.port = await listenOn(0);
+  }
+
+  console.log(`agentgranny2 listening on http://${config.host}:${config.port}`);
+  console.log(`workspace=${config.workspace}`);
+  console.log(`agentCwd=${config.agentCwd}`);
+  console.log(`executor=${config.executor}`);
+  console.log(`model=openrouter/${config.openRouterModel}`);
+}
+
+function listenOn(port: number): Promise<number> {
+  return new Promise((resolvePromise, reject) => {
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onListening = () => {
+      cleanup();
+      const address = server.address();
+      resolvePromise(address && typeof address === "object" ? address.port : port);
+    };
+    const cleanup = () => {
+      server.off("error", onError);
+      server.off("listening", onListening);
+    };
+
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, config.host);
+  });
+}
+
+function isAddressInUse(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EADDRINUSE";
 }
 
 export const serverUrl = pathToFileURL(config.rootDir).toString();
