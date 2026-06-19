@@ -71,12 +71,14 @@ button {
   font-size: 0.86rem;
 }
 
-.workspace-block {
+.workspace-block,
+.runtime-block {
   display: grid;
   gap: 6px;
 }
 
 .workspace-block span,
+.runtime-block span,
 .sessions h2,
 .events-panel h2 {
   margin: 0;
@@ -84,6 +86,19 @@ button {
   font-size: 0.76rem;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+.runtime-block strong {
+  color: #2d3531;
+  font-size: 0.9rem;
+}
+
+.runtime-block small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #6d746e;
 }
 
 code {

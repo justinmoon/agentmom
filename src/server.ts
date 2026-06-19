@@ -26,7 +26,12 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? `${config.host}:${config.port}`}`);
 
     if (url.pathname === "/api/health") {
-      return sendJson(res, { ok: true, workspace: config.workspace });
+      return sendJson(res, {
+        ok: true,
+        workspace: config.workspace,
+        agentCwd: config.agentCwd,
+        executor: config.executor
+      });
     }
 
     if (url.pathname === "/api/state" && req.method === "GET") {
@@ -81,6 +86,8 @@ const server = createServer(async (req, res) => {
 server.listen(config.port, config.host, () => {
   console.log(`agentgranny2 listening on http://${config.host}:${config.port}`);
   console.log(`workspace=${config.workspace}`);
+  console.log(`agentCwd=${config.agentCwd}`);
+  console.log(`executor=${config.executor}`);
   console.log(`model=openrouter/${config.openRouterModel}`);
 });
 

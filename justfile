@@ -14,3 +14,9 @@ typecheck:
 
 smoke-local:
     nix develop -c npm run smoke:local
+
+smoke-smolvm:
+    nix develop -c npm run smoke:smolvm
+
+start:
+    nix develop -c npm run start

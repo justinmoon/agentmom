@@ -15,6 +15,8 @@ import "./styles.css";
 
 const emptyState: AppState = {
   workspace: "",
+  projectsDir: "",
+  agentCwd: "",
   sessionDir: "",
   sessions: [],
   messages: [],
@@ -22,9 +24,8 @@ const emptyState: AppState = {
   isRunning: false,
   model: "",
   tools: [],
-  references: {
-    pi: "",
-    assistantUi: ""
+  runtime: {
+    executor: "local"
   }
 };
 
@@ -109,6 +110,21 @@ function App() {
             <code title={state.workspace}>{state.workspace || "loading"}</code>
           </div>
 
+          <div className="workspace-block">
+            <span>Agent cwd</span>
+            <code title={state.agentCwd}>{state.agentCwd || "loading"}</code>
+          </div>
+
+          <div className="runtime-block">
+            <span>Runtime</span>
+            <strong>{state.runtime.executor}</strong>
+            {state.runtime.vm && (
+              <small title={state.runtime.vm.pid ? `pid ${state.runtime.vm.pid}` : undefined}>
+                {state.runtime.vm.name} · {state.runtime.vm.state}
+              </small>
+            )}
+          </div>
+
           <div className="actions">
             <button type="button" onClick={newSession}>
               <SquarePen size={16} />
@@ -163,7 +179,7 @@ function App() {
                   <ThreadPrimitive.Empty>
                     <div className="empty-thread">
                       <h2>Ask Pi to work in this workspace.</h2>
-                      <p>Messages go straight to a Pi session with read, bash, edit, and write.</p>
+                      <p>Messages go straight to Pi. The app root is protected; project files live under the agent cwd.</p>
                     </div>
                   </ThreadPrimitive.Empty>
                   <ThreadPrimitive.Messages>

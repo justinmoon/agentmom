@@ -29,6 +29,8 @@ export type SessionSummary = {
 
 export type AppState = {
   workspace: string;
+  projectsDir: string;
+  agentCwd: string;
   sessionDir: string;
   session?: SessionSummary;
   sessions: SessionSummary[];
@@ -38,8 +40,13 @@ export type AppState = {
   model: string;
   tools: string[];
   error?: string;
-  references: {
-    pi: string;
-    assistantUi: string;
+  runtime: {
+    executor: "local" | "smolvm";
+    guestWorkspace?: string;
+    vm?: {
+      name: string;
+      state: string;
+      pid: number | null;
+    };
   };
 };

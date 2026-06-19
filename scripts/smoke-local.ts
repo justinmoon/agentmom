@@ -27,7 +27,7 @@ try {
     'Create a file named smoke.txt in the current workspace containing exactly: agentgranny2 smoke ok'
   );
 
-  const smokeFile = join(workspace, "smoke.txt");
+  const smokeFile = join(workspace, "projects", "smoke.txt");
   if (!existsSync(smokeFile)) {
     const state = await bridge.snapshot();
     console.error("smoke.txt was not created");

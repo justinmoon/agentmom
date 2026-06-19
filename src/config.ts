@@ -5,15 +5,27 @@ import { fileURLToPath } from "node:url";
 export type AppConfig = {
   host: string;
   port: number;
+  executor: "local" | "smolvm";
   workspace: string;
+  projectsDir: string;
+  agentCwd: string;
   agentDir: string;
   sessionDir: string;
   openRouterModel: string;
   openRouterEnvFile: string;
   openRouterApiKey?: string;
-  piPath: string;
-  assistantUiPath: string;
   rootDir: string;
+  smolvm: {
+    command: string;
+    name: string;
+    image: string;
+    guestWorkspace: string;
+    cpus: number;
+    memoryMb: number;
+    network: boolean;
+    storageGib: number;
+    overlayGib: number;
+  };
 };
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -50,6 +62,8 @@ function numberFromEnv(name: string, fallback: number): number {
 
 export function loadConfig(): AppConfig {
   const workspace = resolve(process.env.AGENTGRANNY_WORKSPACE ?? process.cwd());
+  const projectsDir = resolve(process.env.AGENTGRANNY_PROJECTS_DIR ?? `${workspace}/projects`);
+  const agentCwd = resolve(process.env.AGENTGRANNY_AGENT_CWD ?? projectsDir);
   const openRouterEnvFile = resolve(process.env.AGENTGRANNY_OPENROUTER_ENV_FILE ?? `${rootDir}/.env`);
   const openRouterApiKey =
     process.env.OPENROUTER_API_KEY ?? readEnvFileValue(openRouterEnvFile, "OPENROUTER_API_KEY");
@@ -63,16 +77,26 @@ export function loadConfig(): AppConfig {
   return {
     host: process.env.AGENTGRANNY_HOST ?? "127.0.0.1",
     port: numberFromEnv("AGENTGRANNY_PORT", 7392),
+    executor: process.env.AGENTGRANNY_EXECUTOR === "local" ? "local" : "smolvm",
     workspace,
+    projectsDir,
+    agentCwd,
     agentDir: resolve(process.env.AGENTGRANNY_AGENT_DIR ?? `${stateDir}/pi`),
     sessionDir: resolve(process.env.AGENTGRANNY_SESSION_DIR ?? `${stateDir}/sessions`),
     openRouterModel: process.env.AGENTGRANNY_OPENROUTER_MODEL ?? "anthropic/claude-sonnet-4.5",
     openRouterEnvFile,
     openRouterApiKey,
-    piPath: resolve(process.env.AGENTGRANNY_PI_PATH ?? "/Users/justin/code/pi-mono"),
-    assistantUiPath: resolve(
-      process.env.AGENTGRANNY_ASSISTANT_UI_PATH ?? "/Users/justin/code/assistant-ui"
-    ),
-    rootDir
+    rootDir,
+    smolvm: {
+      command: process.env.AGENTGRANNY_SMOLVM_COMMAND ?? "smolvm",
+      name: process.env.AGENTGRANNY_SMOLVM_NAME ?? "agentgranny2-default",
+      image: process.env.AGENTGRANNY_SMOLVM_IMAGE ?? "node:24-bookworm",
+      guestWorkspace: process.env.AGENTGRANNY_SMOLVM_GUEST_WORKSPACE ?? "/workspace",
+      cpus: numberFromEnv("AGENTGRANNY_SMOLVM_CPUS", 4),
+      memoryMb: numberFromEnv("AGENTGRANNY_SMOLVM_MEMORY_MB", 8192),
+      network: process.env.AGENTGRANNY_SMOLVM_NETWORK !== "0",
+      storageGib: numberFromEnv("AGENTGRANNY_SMOLVM_STORAGE_GIB", 20),
+      overlayGib: numberFromEnv("AGENTGRANNY_SMOLVM_OVERLAY_GIB", 10)
+    }
   };
 }

@@ -5,12 +5,15 @@ import type { AssistantMessage, ImageContent, Model, TextContent, UserMessage } 
 import {
   AuthStorage,
   createAgentSession,
+  createBashToolDefinition,
   ModelRegistry,
   SessionManager,
   type AgentSession,
-  type AgentSessionEvent
+  type AgentSessionEvent,
+  type ToolDefinition
 } from "@earendil-works/pi-coding-agent";
 import type { AppConfig } from "./config.js";
+import { SmolvmRuntime } from "./smolvm.js";
 import type { AppState, ChatMessage, SessionSummary, UiEvent } from "./types.js";
 
 type PiMessage = UserMessage | AssistantMessage;
@@ -27,6 +30,7 @@ export class PiBridge {
   private liveMessages = new Map<string, ChatMessage>();
   private events: UiEvent[] = [];
   private listeners = new Set<StateListener>();
+  private smolvm?: SmolvmRuntime;
 
   constructor(private readonly config: AppConfig) {}
 
@@ -51,7 +55,7 @@ export class PiBridge {
 
   async listSessions(): Promise<SessionSummary[]> {
     try {
-      const sessions = await SessionManager.list(this.config.workspace, this.config.sessionDir);
+      const sessions = await SessionManager.list(this.config.agentCwd, this.config.sessionDir);
       return sessions.map((session) => ({
         id: session.id,
         path: session.path,
@@ -73,6 +77,8 @@ export class PiBridge {
 
     mkdirSync(this.config.agentDir, { recursive: true });
     mkdirSync(this.config.sessionDir, { recursive: true });
+    mkdirSync(this.config.projectsDir, { recursive: true });
+    mkdirSync(this.config.agentCwd, { recursive: true });
 
     const authStorage = AuthStorage.create(join(this.config.agentDir, "auth.json"));
     if (this.config.openRouterApiKey) {
@@ -89,20 +95,23 @@ export class PiBridge {
 
     const sessionManager =
       request.kind === "open" && request.path
-        ? SessionManager.open(request.path, this.config.sessionDir, this.config.workspace)
+        ? SessionManager.open(request.path, this.config.sessionDir, this.config.agentCwd)
         : request.kind === "new"
-          ? SessionManager.create(this.config.workspace, this.config.sessionDir)
-          : SessionManager.continueRecent(this.config.workspace, this.config.sessionDir);
+          ? SessionManager.create(this.config.agentCwd, this.config.sessionDir)
+          : SessionManager.continueRecent(this.config.agentCwd, this.config.sessionDir);
+
+    const customTools = await this.prepareCustomTools();
 
     const { session, modelFallbackMessage } = await createAgentSession({
-      cwd: this.config.workspace,
+      cwd: this.config.agentCwd,
       agentDir: this.config.agentDir,
       authStorage,
       modelRegistry,
       model,
       thinkingLevel: "minimal",
       sessionManager,
-      tools: ACTIVE_TOOLS
+      tools: ACTIVE_TOOLS,
+      customTools
     });
 
     this.session = session;
@@ -155,6 +164,7 @@ export class PiBridge {
 
   dispose(): void {
     this.disposeCurrentSession();
+    void this.smolvm?.dispose();
     this.listeners.clear();
   }
 
@@ -207,13 +217,15 @@ export class PiBridge {
 
     return {
       workspace: this.config.workspace,
+      projectsDir: this.config.projectsDir,
+      agentCwd: this.config.agentCwd,
       sessionDir: this.config.sessionDir,
       session: session
         ? {
             id: session.sessionId,
             path: session.sessionFile,
             name: session.sessionName,
-            cwd: this.config.workspace
+            cwd: this.config.agentCwd
           }
         : undefined,
       sessions: [],
@@ -223,9 +235,16 @@ export class PiBridge {
       model: `openrouter/${this.config.openRouterModel}`,
       tools: ACTIVE_TOOLS,
       error: this.lastError,
-      references: {
-        pi: this.config.piPath,
-        assistantUi: this.config.assistantUiPath
+      runtime: {
+        executor: this.config.executor,
+        guestWorkspace: this.config.executor === "smolvm" ? this.config.smolvm.guestWorkspace : undefined,
+        vm: this.smolvm?.snapshot()
+          ? {
+              name: this.smolvm.snapshot()!.name,
+              state: this.smolvm.snapshot()!.state,
+              pid: this.smolvm.snapshot()!.pid
+            }
+          : undefined
       }
     };
   }
@@ -235,6 +254,21 @@ export class PiBridge {
     for (const listener of this.listeners) {
       listener(state);
     }
+  }
+
+  private async prepareCustomTools(): Promise<ToolDefinition[] | undefined> {
+    if (this.config.executor !== "smolvm") return undefined;
+
+    this.smolvm ??= new SmolvmRuntime(this.config);
+    this.addEvent("runtime", "Starting smolvm", this.config.smolvm.name);
+    this.emit();
+    await this.smolvm.ensureReady();
+    this.addEvent("runtime", "smolvm ready", this.config.smolvm.name);
+    return [
+      createBashToolDefinition(this.config.agentCwd, {
+        operations: this.smolvm.createBashOperations()
+      }) as unknown as ToolDefinition
+    ];
   }
 
   private addEvent(type: string, title: string, detail?: string, isError = false): void {
