@@ -178,6 +178,7 @@ in
           NODE_ENV = "production";
           XDG_CACHE_HOME = "${cfg.stateDir}/xdg-cache";
           XDG_DATA_HOME = "${cfg.stateDir}/xdg-data";
+          XDG_RUNTIME_DIR = "/run/agentgranny2";
         }
         // lib.optionalAttrs (cfg.deploymentBaseDomain != null) {
           AGENTGRANNY_DEPLOYMENT_BASE_DOMAIN = cfg.deploymentBaseDomain;
@@ -190,6 +191,8 @@ in
         Group = cfg.group;
         Restart = "on-failure";
         RestartSec = 3;
+        RuntimeDirectory = "agentgranny2";
+        RuntimeDirectoryMode = "0700";
         Type = "simple";
         User = cfg.user;
         WorkingDirectory = cfg.workspaceDir;
