@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.direnv/
+.agentgranny2/
+.smoke-workspace/
+.env
+npm-debug.log*
+
+# Local dogfood outputs from trying the agent in this workspace.
+/mutiny-wallet/
+/index.ts
+/encode-event.ts

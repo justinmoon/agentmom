@@ -1,0 +1,334 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { getModel } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent, Model, TextContent, UserMessage } from "@earendil-works/pi-ai";
+import {
+  AuthStorage,
+  createAgentSession,
+  ModelRegistry,
+  SessionManager,
+  type AgentSession,
+  type AgentSessionEvent
+} from "@earendil-works/pi-coding-agent";
+import type { AppConfig } from "./config.js";
+import type { AppState, ChatMessage, SessionSummary, UiEvent } from "./types.js";
+
+type PiMessage = UserMessage | AssistantMessage;
+type StateListener = (state: AppState) => void;
+
+const ACTIVE_TOOLS = ["read", "bash", "edit", "write"];
+
+export class PiBridge {
+  private session?: AgentSession;
+  private sessionManager?: SessionManager;
+  private unsubscribe?: () => void;
+  private isRunning = false;
+  private lastError: string | undefined;
+  private liveMessages = new Map<string, ChatMessage>();
+  private events: UiEvent[] = [];
+  private listeners = new Set<StateListener>();
+
+  constructor(private readonly config: AppConfig) {}
+
+  async init(): Promise<void> {
+    await this.openSession({ kind: "continue" });
+  }
+
+  subscribe(listener: StateListener): () => void {
+    this.listeners.add(listener);
+    listener(this.snapshotSync());
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  async snapshot(): Promise<AppState> {
+    return {
+      ...this.snapshotSync(),
+      sessions: await this.listSessions()
+    };
+  }
+
+  async listSessions(): Promise<SessionSummary[]> {
+    try {
+      const sessions = await SessionManager.list(this.config.workspace, this.config.sessionDir);
+      return sessions.map((session) => ({
+        id: session.id,
+        path: session.path,
+        name: session.name,
+        cwd: session.cwd,
+        firstMessage: session.firstMessage,
+        messageCount: session.messageCount,
+        modified: session.modified.toISOString()
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  async openSession(request: { kind: "continue" | "new" | "open"; path?: string }): Promise<AppState> {
+    this.disposeCurrentSession();
+    this.lastError = undefined;
+    this.liveMessages.clear();
+
+    mkdirSync(this.config.agentDir, { recursive: true });
+    mkdirSync(this.config.sessionDir, { recursive: true });
+
+    const authStorage = AuthStorage.create(join(this.config.agentDir, "auth.json"));
+    if (this.config.openRouterApiKey) {
+      authStorage.setRuntimeApiKey("openrouter", this.config.openRouterApiKey);
+    }
+
+    const modelRegistry = ModelRegistry.create(authStorage, join(this.config.agentDir, "models.json"));
+    const model =
+      modelRegistry.find("openrouter", this.config.openRouterModel) ??
+      (getModel("openrouter", this.config.openRouterModel as never) as Model<any> | undefined);
+    if (!model) {
+      throw new Error(`OpenRouter model not found: ${this.config.openRouterModel}`);
+    }
+
+    const sessionManager =
+      request.kind === "open" && request.path
+        ? SessionManager.open(request.path, this.config.sessionDir, this.config.workspace)
+        : request.kind === "new"
+          ? SessionManager.create(this.config.workspace, this.config.sessionDir)
+          : SessionManager.continueRecent(this.config.workspace, this.config.sessionDir);
+
+    const { session, modelFallbackMessage } = await createAgentSession({
+      cwd: this.config.workspace,
+      agentDir: this.config.agentDir,
+      authStorage,
+      modelRegistry,
+      model,
+      thinkingLevel: "minimal",
+      sessionManager,
+      tools: ACTIVE_TOOLS
+    });
+
+    this.session = session;
+    this.sessionManager = sessionManager;
+    this.unsubscribe = session.subscribe((event) => this.handleEvent(event));
+    this.addEvent("session", request.kind === "new" ? "Started new session" : "Session ready", session.sessionFile);
+    if (modelFallbackMessage) {
+      this.addEvent("model", "Model fallback", modelFallbackMessage, true);
+    }
+    this.emit();
+    return this.snapshot();
+  }
+
+  async sendMessage(content: string): Promise<AppState> {
+    const text = content.trim();
+    if (!text) return this.snapshot();
+    if (!this.session) await this.init();
+    if (!this.session) throw new Error("Pi session was not created");
+    if (this.isRunning) throw new Error("A Pi turn is already running");
+
+    this.isRunning = true;
+    this.lastError = undefined;
+    this.emit();
+
+    try {
+      await this.session.prompt(text);
+    } catch (error) {
+      this.lastError = error instanceof Error ? error.message : String(error);
+      this.addEvent("error", "Turn failed", this.lastError, true);
+      throw error;
+    } finally {
+      this.isRunning = false;
+      this.liveMessages.clear();
+      this.emit();
+    }
+
+    return this.snapshot();
+  }
+
+  async cancel(): Promise<AppState> {
+    if (this.session && this.isRunning) {
+      await this.session.abort();
+      this.addEvent("cancel", "Stopped active turn");
+    }
+    this.isRunning = false;
+    this.liveMessages.clear();
+    this.emit();
+    return this.snapshot();
+  }
+
+  dispose(): void {
+    this.disposeCurrentSession();
+    this.listeners.clear();
+  }
+
+  private disposeCurrentSession(): void {
+    this.unsubscribe?.();
+    this.unsubscribe = undefined;
+    this.session?.dispose();
+    this.session = undefined;
+    this.sessionManager = undefined;
+    this.isRunning = false;
+  }
+
+  private handleEvent(event: AgentSessionEvent): void {
+    if (event.type === "agent_start") {
+      this.isRunning = true;
+      this.addEvent("agent", "Turn started");
+    } else if (event.type === "agent_end") {
+      this.addEvent("agent", event.willRetry ? "Turn ended; retry pending" : "Turn ended");
+    } else if (event.type === "message_start" || event.type === "message_update" || event.type === "message_end") {
+      const message = event.message;
+      if (message.role === "user" || message.role === "assistant") {
+        const chat = toChatMessage(`live-${message.role}`, message, event.type === "message_update");
+        this.liveMessages.set(chat.id, chat);
+      }
+    } else if (event.type === "tool_execution_start") {
+      this.addEvent("tool", `${event.toolName} started`, stringifyCompact(event.args));
+    } else if (event.type === "tool_execution_update") {
+      this.addEvent("tool", `${event.toolName} update`, stringifyCompact(event.partialResult));
+    } else if (event.type === "tool_execution_end") {
+      this.addEvent(
+        "tool",
+        `${event.toolName} ${event.isError ? "failed" : "finished"}`,
+        stringifyCompact(event.result),
+        event.isError
+      );
+    } else if (event.type === "compaction_start") {
+      this.addEvent("compaction", "Compaction started", event.reason);
+    } else if (event.type === "compaction_end") {
+      this.addEvent("compaction", event.aborted ? "Compaction aborted" : "Compaction ended", event.errorMessage);
+    }
+
+    this.emit();
+  }
+
+  private snapshotSync(): AppState {
+    const session = this.session;
+    const sessionManager = this.sessionManager;
+    const persisted = sessionManager ? sessionMessages(sessionManager) : [];
+    const messages = mergeLiveMessages(persisted, [...this.liveMessages.values()]);
+
+    return {
+      workspace: this.config.workspace,
+      sessionDir: this.config.sessionDir,
+      session: session
+        ? {
+            id: session.sessionId,
+            path: session.sessionFile,
+            name: session.sessionName,
+            cwd: this.config.workspace
+          }
+        : undefined,
+      sessions: [],
+      messages,
+      events: this.events,
+      isRunning: this.isRunning,
+      model: `openrouter/${this.config.openRouterModel}`,
+      tools: ACTIVE_TOOLS,
+      error: this.lastError,
+      references: {
+        pi: this.config.piPath,
+        assistantUi: this.config.assistantUiPath
+      }
+    };
+  }
+
+  private emit(): void {
+    const state = this.snapshotSync();
+    for (const listener of this.listeners) {
+      listener(state);
+    }
+  }
+
+  private addEvent(type: string, title: string, detail?: string, isError = false): void {
+    this.events = [
+      {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        type,
+        title,
+        detail,
+        isError,
+        createdAt: new Date().toISOString()
+      },
+      ...this.events
+    ].slice(0, 100);
+  }
+}
+
+function sessionMessages(sessionManager: SessionManager): ChatMessage[] {
+  return sessionManager
+    .getBranch()
+    .filter((entry) => entry.type === "message")
+    .flatMap((entry) => {
+      const message = entry.message;
+      if (message.role !== "user" && message.role !== "assistant") return [];
+      return [toChatMessage(entry.id, message, false, entry.timestamp)];
+    });
+}
+
+function mergeLiveMessages(persisted: ChatMessage[], live: ChatMessage[]): ChatMessage[] {
+  const result = [...persisted];
+  for (const liveMessage of live) {
+    const alreadyPersisted = result.some(
+      (message) => message.role === liveMessage.role && message.content === liveMessage.content
+    );
+    if (!alreadyPersisted) result.push(liveMessage);
+  }
+  return result;
+}
+
+function toChatMessage(
+  idPrefix: string,
+  message: PiMessage,
+  running: boolean,
+  fallbackTimestamp?: string
+): ChatMessage {
+  const content = messageToText(message);
+  const createdAt =
+    typeof message.timestamp === "number"
+      ? new Date(message.timestamp).toISOString()
+      : fallbackTimestamp ?? new Date().toISOString();
+
+  return {
+    id: `${idPrefix}-${message.role}-${createdAt}`,
+    role: message.role,
+    content: content || (message.role === "assistant" ? "[tool call]" : ""),
+    createdAt,
+    status: running ? "running" : message.role === "assistant" && message.stopReason === "error" ? "error" : "complete"
+  };
+}
+
+function messageToText(message: PiMessage): string {
+  if (message.role === "user") {
+    return typeof message.content === "string" ? message.content : textParts(message.content);
+  }
+
+  const text = message.content
+    .map((part) => {
+      if (part.type === "text") return part.text;
+      if (part.type === "toolCall") return `[${part.name}]`;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  return message.errorMessage ? `${text}\n${message.errorMessage}`.trim() : text;
+}
+
+function textParts(parts: Array<TextContent | ImageContent>): string {
+  return parts
+    .map((part) => (part.type === "text" ? part.text : "[image]"))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function stringifyCompact(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "string") return truncate(value);
+  try {
+    return truncate(JSON.stringify(value));
+  } catch {
+    return truncate(String(value));
+  }
+}
+
+function truncate(value: string, max = 1200): string {
+  return value.length > max ? `${value.slice(0, max)}...` : value;
+}
