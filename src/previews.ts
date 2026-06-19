@@ -5,6 +5,7 @@ import type { AppConfig } from "./config.js";
 import type { PreviewService } from "./types.js";
 
 export const PREVIEW_SENTINEL = "__AGENTGRANNY_EXPOSE__";
+export const DEPLOY_SENTINEL = "__AGENTGRANNY_DEPLOY__";
 
 export type PreviewFetchRequest = {
   method: string;
@@ -21,11 +22,17 @@ export type PreviewFetchResponse = {
 
 type RegisterPreviewInput = {
   port: number;
-  name?: string;
+  name: string;
 };
 
 export type PreviewRegistration = RegisterPreviewInput & {
-  command?: string;
+  name: string;
+};
+
+export type DeploymentRegistration = {
+  cwd: string;
+  slug: string;
+  port: number;
 };
 
 type GuestFetcher = (port: number, request: PreviewFetchRequest) => Promise<PreviewFetchResponse>;
@@ -48,13 +55,17 @@ export class PreviewManager {
     if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
       throw new Error(`Invalid preview port: ${input.port}`);
     }
+    const name = input.name.trim();
+    if (!name) {
+      throw new Error("Preview name is required");
+    }
 
     const now = new Date().toISOString();
     const id = `port-${input.port}`;
     const existing = this.services.get(id);
     const service: PreviewService = {
       id,
-      name: input.name?.trim() || `localhost:${input.port}`,
+      name,
       port: input.port,
       runtime: this.config.executor,
       path: `${this.config.previewBasePath}/${id}/`,
@@ -88,6 +99,15 @@ export class PreviewManager {
     for (const line of output.split(/\r?\n/)) {
       if (!line.startsWith(PREVIEW_SENTINEL)) continue;
       registrations.push(JSON.parse(line.slice(PREVIEW_SENTINEL.length)) as PreviewRegistration);
+    }
+    return registrations;
+  }
+
+  parseDeploymentOutput(output: string): DeploymentRegistration[] {
+    const registrations: DeploymentRegistration[] = [];
+    for (const line of output.split(/\r?\n/)) {
+      if (!line.startsWith(DEPLOY_SENTINEL)) continue;
+      registrations.push(JSON.parse(line.slice(DEPLOY_SENTINEL.length)) as DeploymentRegistration);
     }
     return registrations;
   }
@@ -228,7 +248,8 @@ function textResponse(status: number, text: string): PreviewFetchResponse {
 
 function previewCliSource(): string {
   return `#!/usr/bin/env node
-const sentinel = ${JSON.stringify(PREVIEW_SENTINEL)};
+const previewSentinel = ${JSON.stringify(PREVIEW_SENTINEL)};
+const deploySentinel = ${JSON.stringify(DEPLOY_SENTINEL)};
 const [command, ...args] = process.argv.slice(2);
 
 function fail(message) {
@@ -236,38 +257,62 @@ function fail(message) {
   process.exit(1);
 }
 
-function quoteArg(value) {
-  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
-  return "'" + value.replaceAll("'", "'\\\\''") + "'";
+function usage() {
+  fail("Usage:\\n  granny expose <port> <name>\\n  granny deploy --cwd <absolute-path> --port <port> --slug <slug>");
 }
 
-if (command !== "expose" && command !== "serve") {
-  fail("Usage: granny expose <port> [name] [-- <command>]\\n       granny serve <port> [name] -- <command>");
+function parsePort(value) {
+  const port = Number.parseInt(value || "", 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) usage();
+  return port;
 }
 
-const separator = args.indexOf("--");
-const left = separator === -1 ? args : args.slice(0, separator);
-const right = separator === -1 ? [] : args.slice(separator + 1);
+function readRequiredOption(name) {
+  const prefix = "--" + name + "=";
+  const equalsArg = args.find((arg) => arg.startsWith(prefix));
+  if (equalsArg) return equalsArg.slice(prefix.length).trim();
 
-const port = Number.parseInt(left[0] || "", 10);
-if (!Number.isInteger(port) || port < 1 || port > 65535) {
-  fail("Usage: granny expose <port> [name] [-- <command>]\\n       granny serve <port> [name] -- <command>");
+  const index = args.indexOf("--" + name);
+  if (index === -1 || index + 1 >= args.length) usage();
+  const value = args[index + 1].trim();
+  if (!value || value.startsWith("--")) usage();
+  return value;
 }
 
-let name = left.slice(1).join(" ").trim();
-if (!name) name = "localhost:" + port;
-
-const payload = { port, name };
-const serviceCommand = right.map(quoteArg).join(" ").trim();
-if (serviceCommand) {
-  if (!serviceCommand) fail("Usage: granny serve <port> [name] -- <command>");
-  payload.command = serviceCommand;
-} else if (command === "serve") {
-  fail("Usage: granny serve <port> [name] -- <command>");
+function assertNoUnexpectedDeployArgs() {
+  const allowed = new Set(["--cwd", "--port", "--slug"]);
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg.startsWith("--cwd=") || arg.startsWith("--port=") || arg.startsWith("--slug=")) continue;
+    if (!allowed.has(arg)) usage();
+    index += 1;
+  }
 }
 
-console.log(sentinel + JSON.stringify(payload));
-console.log((serviceCommand ? "Preview service starting: " : "Preview exposed: ") + name + " on port " + port);
+if (command === "expose") {
+  const port = parsePort(args[0]);
+  const name = args.slice(1).join(" ").trim();
+  if (!name) usage();
+
+  console.log(previewSentinel + JSON.stringify({ port, name }));
+  console.log("Preview exposed: " + name + " on port " + port);
+  process.exit(0);
+}
+
+if (command === "deploy") {
+  assertNoUnexpectedDeployArgs();
+  const cwd = readRequiredOption("cwd");
+  const slug = readRequiredOption("slug");
+  const port = parsePort(readRequiredOption("port"));
+  if (!cwd.startsWith("/")) fail("granny deploy requires --cwd to be an absolute path");
+  if (!slug) usage();
+
+  console.log(deploySentinel + JSON.stringify({ cwd, slug, port }));
+  console.log("Deployment requested: " + slug + " from " + cwd + " on port " + port);
+  process.exit(0);
+}
+
+usage();
 `;
 }
 

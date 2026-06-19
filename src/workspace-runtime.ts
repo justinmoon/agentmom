@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AppConfig } from "./config.js";
 import type { CatalogWorkspace } from "./catalog.js";
+import type { DeploymentManager } from "./deployments.js";
 import { PiBridge } from "./pi-bridge.js";
 import { PreviewManager } from "./previews.js";
 
@@ -14,7 +15,10 @@ export type WorkspaceRuntime = {
 export class WorkspaceRuntimeManager {
   private readonly runtimes = new Map<string, Promise<WorkspaceRuntime>>();
 
-  constructor(private readonly baseConfig: AppConfig) {}
+  constructor(
+    private readonly baseConfig: AppConfig,
+    private readonly deployments?: DeploymentManager
+  ) {}
 
   async get(workspace: CatalogWorkspace): Promise<WorkspaceRuntime> {
     let runtime = this.runtimes.get(workspace.id);
@@ -43,7 +47,7 @@ export class WorkspaceRuntimeManager {
     mkdirSync(config.sessionDir, { recursive: true });
 
     const previews = new PreviewManager(config);
-    const bridge = new PiBridge(config, previews);
+    const bridge = new PiBridge(config, previews, this.deployments);
     await bridge.init();
     return { config, previews, bridge };
   }

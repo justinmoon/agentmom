@@ -27,6 +27,9 @@ smoke-smolvm:
 smoke-deploy:
     nix develop -c npm run smoke:deploy
 
+podman:
+    nix develop -c scripts/ensure-podman-machine.sh
+
 start:
     nix develop -c npm run start
 

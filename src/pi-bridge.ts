@@ -1,6 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { spawn, type ChildProcess } from "node:child_process";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { getModel } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Model, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import {
@@ -18,12 +17,15 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AppConfig } from "./config.js";
 import {
+  DEPLOY_SENTINEL,
   PREVIEW_SENTINEL,
   PreviewManager,
+  type DeploymentRegistration,
   type PreviewFetchRequest,
   type PreviewFetchResponse,
   type PreviewRegistration
 } from "./previews.js";
+import type { DeploymentManager } from "./deployments.js";
 import { SmolvmRuntime } from "./smolvm.js";
 import type { AppState, ChatMessage, SessionSummary, UiEvent } from "./types.js";
 
@@ -42,11 +44,11 @@ export class PiBridge {
   private events: UiEvent[] = [];
   private listeners = new Set<StateListener>();
   private smolvm?: SmolvmRuntime;
-  private previewProcesses = new Map<string, ChildProcess>();
 
   constructor(
     private readonly config: AppConfig,
-    private readonly previews: PreviewManager
+    private readonly previews: PreviewManager,
+    private readonly deployments?: DeploymentManager
   ) {
     this.previews.setGuestFetcher((port, request) => this.fetchPreviewFromGuest(port, request));
   }
@@ -125,9 +127,17 @@ export class PiBridge {
         ...base,
         [
           "## Agent Granny Preview",
-          "- To start a long-running HTTP dev server, use `granny serve <port> [name] -- <command>`.",
-          "- If a server is already running, use `granny expose <port> [name]`.",
-          "- Exposed services appear in the web preview panel."
+          "- Start preview servers yourself from the project directory.",
+          "- Then expose the running port with `granny expose <port> <name>`.",
+          "- The preview name is required and should be human-readable.",
+          "- Do not expose the parent workspace directory unless the user asked for a directory listing.",
+          "",
+          "## Agent Granny Deployments",
+          "- When the user asks to deploy or publish, do it yourself with `granny deploy`.",
+          "- The project must have a Dockerfile. Make it listen on `$PORT`.",
+          "- All deploy args are required: `granny deploy --cwd <absolute-project-path> --port <port> --slug <slug>`.",
+          "- If you are in the project directory, use `granny deploy --cwd \"$PWD\" --port <port> --slug <slug>`.",
+          "- Deployment service errors are returned in command output; fix the Dockerfile/app and rerun deploy."
         ].join("\n")
       ]
     });
@@ -200,7 +210,7 @@ export class PiBridge {
     return this.previews.list();
   }
 
-  registerPreview(port: number, name?: string): AppState {
+  registerPreview(port: number, name: string): AppState {
     const service = this.previews.register({ port, name });
     this.addEvent("preview", "Preview exposed", `${service.name} ${service.path}`);
     this.emit();
@@ -209,7 +219,6 @@ export class PiBridge {
 
   removePreview(id: string): AppState {
     if (this.previews.remove(id)) {
-      this.stopPreviewProcess(id);
       this.addEvent("preview", "Preview removed", id);
       this.emit();
     }
@@ -246,9 +255,6 @@ export class PiBridge {
 
   dispose(): void {
     this.disposeCurrentSession();
-    for (const id of [...this.previewProcesses.keys()]) {
-      this.stopPreviewProcess(id);
-    }
     void this.smolvm?.dispose();
     this.listeners.clear();
   }
@@ -380,18 +386,26 @@ export class PiBridge {
 
         const processLine = (line: string) => {
           const trimmed = line.replace(/\r?\n$/, "");
-          if (!trimmed.startsWith(PREVIEW_SENTINEL)) {
+          if (!trimmed.startsWith(PREVIEW_SENTINEL) && !trimmed.startsWith(DEPLOY_SENTINEL)) {
             forward(line);
             return;
           }
 
           try {
-            const registrations = this.previews.parseSentinelOutput(trimmed);
+            if (trimmed.startsWith(PREVIEW_SENTINEL)) {
+              const registrations = this.previews.parseSentinelOutput(trimmed);
+              for (const registration of registrations) {
+                registrationTasks.push(this.handlePreviewRegistration(registration));
+              }
+              return;
+            }
+
+            const registrations = this.previews.parseDeploymentOutput(trimmed);
             for (const registration of registrations) {
-              registrationTasks.push(this.handlePreviewRegistration(registration, cwd));
+              registrationTasks.push(this.handleDeploymentRegistration(registration, forward));
             }
           } catch (error) {
-            this.addEvent("preview", "Preview registration failed", error instanceof Error ? error.message : String(error), true);
+            this.addEvent("granny-cli", "Command registration failed", error instanceof Error ? error.message : String(error), true);
             this.emit();
           }
         };
@@ -423,18 +437,10 @@ export class PiBridge {
     };
   }
 
-  private async handlePreviewRegistration(registration: PreviewRegistration, cwd: string): Promise<void> {
+  private async handlePreviewRegistration(registration: PreviewRegistration): Promise<void> {
     try {
-      if (registration.command) {
-        await this.startPreviewProcess(registration, cwd);
-      }
-
       const service = this.previews.register(registration);
-      this.addEvent(
-        "preview",
-        registration.command ? "Preview service started" : "Preview exposed",
-        `${service.name} ${service.path}`
-      );
+      this.addEvent("preview", "Preview exposed", `${service.name} ${service.path}`);
       this.emit();
     } catch (error) {
       this.addEvent("preview", "Preview registration failed", error instanceof Error ? error.message : String(error), true);
@@ -442,58 +448,46 @@ export class PiBridge {
     }
   }
 
-  private async startPreviewProcess(registration: PreviewRegistration, cwd: string): Promise<void> {
-    if (!registration.command) return;
-    const id = `port-${registration.port}`;
-    this.stopPreviewProcess(id);
+  private async handleDeploymentRegistration(
+    registration: DeploymentRegistration,
+    forward: (text: string) => void
+  ): Promise<void> {
+    try {
+      if (!this.deployments) {
+        throw new Error("Deployment service is not available");
+      }
 
-    const onData = (data: Buffer) => {
-      const text = data.toString("utf8").trim();
-      if (!text) return;
-      this.addEvent("preview-log", registration.name ?? id, truncate(text, 1200));
+      const projectPath = this.resolveAgentPath(registration.cwd);
+      const deployment = await this.deployments.publish({
+        path: projectPath,
+        slug: registration.slug,
+        port: registration.port
+      });
+      const url = deployment.url ?? deployment.urlPath;
+      this.addEvent("deployment", "Deployment published", `${deployment.slug} ${url}`);
+      forward(`Deployment published: ${url}\n`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.addEvent("deployment", "Deployment failed", truncate(message, 4000), true);
+      forward(`Deployment failed: ${message}\n`);
+    } finally {
       this.emit();
-    };
-
-    const child =
-      this.config.executor === "smolvm"
-        ? await this.startSmolvmPreviewProcess(registration.command, cwd, onData)
-        : this.startLocalPreviewProcess(registration.command, cwd, onData);
-
-    this.previewProcesses.set(id, child);
-    child.on("close", (exitCode) => {
-      if (this.previewProcesses.get(id) !== child) return;
-      this.previewProcesses.delete(id);
-      this.addEvent("preview", "Preview service exited", `${registration.name ?? id} exited ${exitCode ?? "unknown"}`);
-      this.emit();
-    });
+    }
   }
 
-  private async startSmolvmPreviewProcess(
-    command: string,
-    cwd: string,
-    onData: (data: Buffer) => void
-  ): Promise<ChildProcess> {
-    this.smolvm ??= new SmolvmRuntime(this.config);
-    return this.smolvm.startProcess(command, cwd, onData);
-  }
+  private resolveAgentPath(path: string): string {
+    const trimmed = path.trim();
+    if (!trimmed) throw new Error("Path is required");
 
-  private startLocalPreviewProcess(command: string, cwd: string, onData: (data: Buffer) => void): ChildProcess {
-    const child = spawn("sh", ["-lc", command], {
-      cwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true
-    });
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", onData);
-    return child;
-  }
+    if (this.config.executor === "smolvm") {
+      const guestWorkspace = this.config.smolvm.guestWorkspace.replace(/\/+$/, "");
+      if (trimmed === guestWorkspace || trimmed.startsWith(`${guestWorkspace}/`)) {
+        const relativePath = trimmed.slice(guestWorkspace.length).replace(/^\/+/, "");
+        return resolve(this.config.projectsDir, relativePath);
+      }
+    }
 
-  private stopPreviewProcess(id: string): void {
-    const child = this.previewProcesses.get(id);
-    if (!child) return;
-    child.kill("SIGTERM");
-    this.previewProcesses.delete(id);
+    return resolve(trimmed);
   }
 
   private async fetchPreviewFromGuest(port: number, request: PreviewFetchRequest): Promise<PreviewFetchResponse> {
