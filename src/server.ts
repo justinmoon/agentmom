@@ -5,10 +5,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { loadConfig } from "./config.js";
 import { PiBridge } from "./pi-bridge.js";
+import { PreviewManager, previewPath, requestHeaders } from "./previews.js";
 import type { AppState } from "./types.js";
 
 const config = loadConfig();
-const bridge = new PiBridge(config);
+const previews = new PreviewManager(config);
+const bridge = new PiBridge(config, previews);
 const isProduction = process.env.NODE_ENV === "production";
 
 let vite: ViteDevServer | undefined;
@@ -24,6 +26,24 @@ await bridge.init();
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? `${config.host}:${config.port}`}`);
+
+    if (url.pathname.startsWith("/preview/") && !url.pathname.slice("/preview/".length).includes("/")) {
+      res.writeHead(302, { Location: `${url.pathname}/${url.search}` });
+      res.end();
+      return;
+    }
+
+    const preview = previewPath(url.pathname);
+    if (preview) {
+      const body = await readBody(req);
+      const response = await bridge.fetchPreview(preview.id, {
+        method: req.method ?? "GET",
+        path: `${preview.upstreamPath}${url.search}`,
+        headers: requestHeaders(req.headers),
+        body: body.length > 0 ? body : undefined
+      });
+      return sendProxyResponse(res, response.status, response.headers, req.method === "HEAD" ? undefined : response.body);
+    }
 
     if (url.pathname === "/api/health") {
       return sendJson(res, {
@@ -41,6 +61,21 @@ const server = createServer(async (req, res) => {
 
     if (url.pathname === "/api/sessions" && req.method === "GET") {
       return sendJson(res, { sessions: await bridge.listSessions() });
+    }
+
+    if (url.pathname === "/api/previews" && req.method === "GET") {
+      return sendJson(res, { previews: bridge.listPreviews() });
+    }
+
+    if (url.pathname === "/api/previews" && req.method === "POST") {
+      const body = await readJson(req);
+      const port = Number.parseInt(String(body?.port ?? ""), 10);
+      return sendJson(res, bridge.registerPreview(port, body?.name ? String(body.name) : undefined));
+    }
+
+    if (url.pathname.startsWith("/api/previews/") && req.method === "DELETE") {
+      const id = decodeURIComponent(url.pathname.slice("/api/previews/".length));
+      return sendJson(res, bridge.removePreview(id));
     }
 
     if (url.pathname === "/api/sessions" && req.method === "POST") {
@@ -113,17 +148,32 @@ function handleSse(res: ServerResponse): void {
 }
 
 async function readJson(req: IncomingMessage): Promise<any> {
+  const body = await readBody(req);
+  if (body.length === 0) return undefined;
+  return JSON.parse(body.toString("utf8"));
+}
+
+async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
-  if (chunks.length === 0) return undefined;
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  return Buffer.concat(chunks);
 }
 
 function sendJson(res: ServerResponse, payload: unknown, status = 200): void {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(payload));
+}
+
+function sendProxyResponse(
+  res: ServerResponse,
+  status: number,
+  headers: Record<string, string>,
+  body: Buffer | undefined
+): void {
+  res.writeHead(status, headers);
+  res.end(body);
 }
 
 function sendError(res: ServerResponse, error: unknown, status = 500): void {

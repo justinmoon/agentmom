@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Model, TextContent, UserMessage } from "@earendil-works/pi-ai";
@@ -6,13 +7,23 @@ import {
   AuthStorage,
   createAgentSession,
   createBashToolDefinition,
+  createLocalBashOperations,
+  DefaultResourceLoader,
   ModelRegistry,
   SessionManager,
   type AgentSession,
   type AgentSessionEvent,
+  type BashOperations,
   type ToolDefinition
 } from "@earendil-works/pi-coding-agent";
 import type { AppConfig } from "./config.js";
+import {
+  PREVIEW_SENTINEL,
+  PreviewManager,
+  type PreviewFetchRequest,
+  type PreviewFetchResponse,
+  type PreviewRegistration
+} from "./previews.js";
 import { SmolvmRuntime } from "./smolvm.js";
 import type { AppState, ChatMessage, SessionSummary, UiEvent } from "./types.js";
 
@@ -31,8 +42,14 @@ export class PiBridge {
   private events: UiEvent[] = [];
   private listeners = new Set<StateListener>();
   private smolvm?: SmolvmRuntime;
+  private previewProcesses = new Map<string, ChildProcess>();
 
-  constructor(private readonly config: AppConfig) {}
+  constructor(
+    private readonly config: AppConfig,
+    private readonly previews: PreviewManager
+  ) {
+    this.previews.setGuestFetcher((port, request) => this.fetchPreviewFromGuest(port, request));
+  }
 
   async init(): Promise<void> {
     await this.openSession({ kind: "continue" });
@@ -79,6 +96,7 @@ export class PiBridge {
     mkdirSync(this.config.sessionDir, { recursive: true });
     mkdirSync(this.config.projectsDir, { recursive: true });
     mkdirSync(this.config.agentCwd, { recursive: true });
+    const previewCli = this.previews.cliInstall();
 
     const authStorage = AuthStorage.create(join(this.config.agentDir, "auth.json"));
     if (this.config.openRouterApiKey) {
@@ -100,7 +118,22 @@ export class PiBridge {
           ? SessionManager.create(this.config.agentCwd, this.config.sessionDir)
           : SessionManager.continueRecent(this.config.agentCwd, this.config.sessionDir);
 
-    const customTools = await this.prepareCustomTools();
+    const resourceLoader = new DefaultResourceLoader({
+      cwd: this.config.agentCwd,
+      agentDir: this.config.agentDir,
+      appendSystemPromptOverride: (base) => [
+        ...base,
+        [
+          "## Agent Granny Preview",
+          "- To start a long-running HTTP dev server, use `granny serve <port> [name] -- <command>`.",
+          "- If a server is already running, use `granny expose <port> [name]`.",
+          "- Exposed services appear in the web preview panel."
+        ].join("\n")
+      ]
+    });
+    await resourceLoader.reload();
+
+    const customTools = await this.prepareCustomTools(previewCli.guestBinDir);
 
     const { session, modelFallbackMessage } = await createAgentSession({
       cwd: this.config.agentCwd,
@@ -110,6 +143,7 @@ export class PiBridge {
       model,
       thinkingLevel: "minimal",
       sessionManager,
+      resourceLoader,
       tools: ACTIVE_TOOLS,
       customTools
     });
@@ -162,8 +196,35 @@ export class PiBridge {
     return this.snapshot();
   }
 
+  listPreviews() {
+    return this.previews.list();
+  }
+
+  registerPreview(port: number, name?: string): AppState {
+    const service = this.previews.register({ port, name });
+    this.addEvent("preview", "Preview exposed", `${service.name} ${service.path}`);
+    this.emit();
+    return this.snapshotSync();
+  }
+
+  removePreview(id: string): AppState {
+    if (this.previews.remove(id)) {
+      this.stopPreviewProcess(id);
+      this.addEvent("preview", "Preview removed", id);
+      this.emit();
+    }
+    return this.snapshotSync();
+  }
+
+  async fetchPreview(id: string, request: PreviewFetchRequest): Promise<PreviewFetchResponse> {
+    return this.previews.fetch(id, request);
+  }
+
   dispose(): void {
     this.disposeCurrentSession();
+    for (const id of [...this.previewProcesses.keys()]) {
+      this.stopPreviewProcess(id);
+    }
     void this.smolvm?.dispose();
     this.listeners.clear();
   }
@@ -233,6 +294,7 @@ export class PiBridge {
           }
         : undefined,
       sessions: [],
+      previews: this.previews.list(),
       messages,
       events: this.events,
       isRunning: this.isRunning,
@@ -260,19 +322,159 @@ export class PiBridge {
     }
   }
 
-  private async prepareCustomTools(): Promise<ToolDefinition[] | undefined> {
-    if (this.config.executor !== "smolvm") return undefined;
+  private async prepareCustomTools(guestBinDir: string): Promise<ToolDefinition[]> {
+    let operations: BashOperations;
 
-    this.smolvm ??= new SmolvmRuntime(this.config);
-    this.addEvent("runtime", "Starting smolvm", this.config.smolvm.name);
-    this.emit();
-    await this.smolvm.ensureReady();
-    this.addEvent("runtime", "smolvm ready", this.config.smolvm.name);
+    if (this.config.executor === "smolvm") {
+      this.smolvm ??= new SmolvmRuntime(this.config);
+      this.addEvent("runtime", "Starting smolvm", this.config.smolvm.name);
+      this.emit();
+      await this.smolvm.ensureReady();
+      this.addEvent("runtime", "smolvm ready", this.config.smolvm.name);
+      operations = this.smolvm.createBashOperations();
+    } else {
+      operations = createLocalBashOperations();
+    }
+
     return [
       createBashToolDefinition(this.config.agentCwd, {
-        operations: this.smolvm.createBashOperations()
+        commandPrefix: `export PATH=${shellQuote(guestBinDir)}:$PATH`,
+        operations: this.withPreviewRegistration(operations)
       }) as unknown as ToolDefinition
     ];
+  }
+
+  private withPreviewRegistration(operations: BashOperations): BashOperations {
+    return {
+      exec: async (command, cwd, options) => {
+        let pending = "";
+        const registrationTasks: Promise<void>[] = [];
+
+        const forward = (text: string) => {
+          if (text) options.onData(Buffer.from(text, "utf8"));
+        };
+
+        const processLine = (line: string) => {
+          const trimmed = line.replace(/\r?\n$/, "");
+          if (!trimmed.startsWith(PREVIEW_SENTINEL)) {
+            forward(line);
+            return;
+          }
+
+          try {
+            const registrations = this.previews.parseSentinelOutput(trimmed);
+            for (const registration of registrations) {
+              registrationTasks.push(this.handlePreviewRegistration(registration, cwd));
+            }
+          } catch (error) {
+            this.addEvent("preview", "Preview registration failed", error instanceof Error ? error.message : String(error), true);
+            this.emit();
+          }
+        };
+
+        const onData = (data: Buffer) => {
+          pending += data.toString("utf8");
+          for (;;) {
+            const newline = pending.indexOf("\n");
+            if (newline === -1) break;
+            const line = pending.slice(0, newline + 1);
+            pending = pending.slice(newline + 1);
+            processLine(line);
+          }
+        };
+
+        try {
+          return await operations.exec(command, cwd, {
+            ...options,
+            onData
+          });
+        } finally {
+          if (pending) {
+            processLine(pending);
+            pending = "";
+          }
+          await Promise.all(registrationTasks);
+        }
+      }
+    };
+  }
+
+  private async handlePreviewRegistration(registration: PreviewRegistration, cwd: string): Promise<void> {
+    try {
+      if (registration.command) {
+        await this.startPreviewProcess(registration, cwd);
+      }
+
+      const service = this.previews.register(registration);
+      this.addEvent(
+        "preview",
+        registration.command ? "Preview service started" : "Preview exposed",
+        `${service.name} ${service.path}`
+      );
+      this.emit();
+    } catch (error) {
+      this.addEvent("preview", "Preview registration failed", error instanceof Error ? error.message : String(error), true);
+      this.emit();
+    }
+  }
+
+  private async startPreviewProcess(registration: PreviewRegistration, cwd: string): Promise<void> {
+    if (!registration.command) return;
+    const id = `port-${registration.port}`;
+    this.stopPreviewProcess(id);
+
+    const onData = (data: Buffer) => {
+      const text = data.toString("utf8").trim();
+      if (!text) return;
+      this.addEvent("preview-log", registration.name ?? id, truncate(text, 1200));
+      this.emit();
+    };
+
+    const child =
+      this.config.executor === "smolvm"
+        ? await this.startSmolvmPreviewProcess(registration.command, cwd, onData)
+        : this.startLocalPreviewProcess(registration.command, cwd, onData);
+
+    this.previewProcesses.set(id, child);
+    child.on("close", (exitCode) => {
+      if (this.previewProcesses.get(id) !== child) return;
+      this.previewProcesses.delete(id);
+      this.addEvent("preview", "Preview service exited", `${registration.name ?? id} exited ${exitCode ?? "unknown"}`);
+      this.emit();
+    });
+  }
+
+  private async startSmolvmPreviewProcess(
+    command: string,
+    cwd: string,
+    onData: (data: Buffer) => void
+  ): Promise<ChildProcess> {
+    this.smolvm ??= new SmolvmRuntime(this.config);
+    return this.smolvm.startProcess(command, cwd, onData);
+  }
+
+  private startLocalPreviewProcess(command: string, cwd: string, onData: (data: Buffer) => void): ChildProcess {
+    const child = spawn("sh", ["-lc", command], {
+      cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
+    });
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+    return child;
+  }
+
+  private stopPreviewProcess(id: string): void {
+    const child = this.previewProcesses.get(id);
+    if (!child) return;
+    child.kill("SIGTERM");
+    this.previewProcesses.delete(id);
+  }
+
+  private async fetchPreviewFromGuest(port: number, request: PreviewFetchRequest): Promise<PreviewFetchResponse> {
+    this.smolvm ??= new SmolvmRuntime(this.config);
+    return this.smolvm.fetchHttp(port, request);
   }
 
   private addEvent(type: string, title: string, detail?: string, isError = false): void {
@@ -369,4 +571,8 @@ function stringifyCompact(value: unknown): string | undefined {
 
 function truncate(value: string, max = 1200): string {
   return value.length > max ? `${value.slice(0, max)}...` : value;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }

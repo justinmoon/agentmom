@@ -27,6 +27,16 @@ export type SessionSummary = {
   modified?: string;
 };
 
+export type PreviewService = {
+  id: string;
+  name: string;
+  port: number;
+  runtime: "local" | "smolvm";
+  path: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AppState = {
   app: {
     commit?: string;
@@ -38,6 +48,7 @@ export type AppState = {
   sessionDir: string;
   session?: SessionSummary;
   sessions: SessionSummary[];
+  previews: PreviewService[];
   messages: ChatMessage[];
   events: UiEvent[];
   isRunning: boolean;

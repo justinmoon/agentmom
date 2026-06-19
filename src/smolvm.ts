@@ -1,9 +1,10 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import { posix as pathPosix } from "node:path";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import type { AppConfig } from "./config.js";
+import type { PreviewFetchRequest, PreviewFetchResponse } from "./previews.js";
 
 export type SmolvmSnapshot = {
   name: string;
@@ -15,6 +16,7 @@ export type SmolvmSnapshot = {
 export class SmolvmRuntime {
   private currentState?: SmolvmSnapshot;
   private startPromise?: Promise<void>;
+  private processes = new Set<ChildProcess>();
 
   constructor(private readonly config: AppConfig) {}
 
@@ -45,7 +47,79 @@ export class SmolvmRuntime {
     };
   }
 
-  async dispose(): Promise<void> {}
+  async fetchHttp(port: number, request: PreviewFetchRequest): Promise<PreviewFetchResponse> {
+    await this.ensureReady();
+
+    const payload = Buffer.from(
+      JSON.stringify({
+        method: request.method,
+        url: `http://127.0.0.1:${port}${request.path}`,
+        headers: request.headers,
+        bodyBase64: request.body?.toString("base64")
+      }),
+      "utf8"
+    ).toString("base64");
+
+    const result = await this.execInGuest(
+      `node -e ${shellQuote(GUEST_FETCH_SCRIPT)} ${shellQuote(payload)}`,
+      this.config.smolvm.guestWorkspace,
+      { timeout: 30 }
+    );
+
+    if (result.exitCode !== 0) {
+      throw new Error(`guest preview fetch failed: ${result.stderr || result.stdout}`);
+    }
+
+    const parsed = JSON.parse(result.stdout) as {
+      status: number;
+      headers: Record<string, string>;
+      bodyBase64: string;
+    };
+
+    return {
+      status: parsed.status,
+      headers: parsed.headers,
+      body: Buffer.from(parsed.bodyBase64, "base64")
+    };
+  }
+
+  async startProcess(command: string, cwd: string, onData?: (data: Buffer) => void): Promise<ChildProcess> {
+    await this.ensureReady();
+
+    const child = spawn(
+      this.config.smolvm.command,
+      [
+        "machine",
+        "exec",
+        "--stream",
+        "--name",
+        this.config.smolvm.name,
+        "--workdir",
+        this.hostCwdToGuest(cwd),
+        "--",
+        "sh",
+        "-lc",
+        command
+      ],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true
+      }
+    );
+
+    this.processes.add(child);
+    child.stdout?.on("data", onData ?? (() => {}));
+    child.stderr?.on("data", onData ?? (() => {}));
+    child.on("close", () => this.processes.delete(child));
+    return child;
+  }
+
+  async dispose(): Promise<void> {
+    for (const child of this.processes) {
+      child.kill("SIGTERM");
+    }
+    this.processes.clear();
+  }
 
   private async start(): Promise<void> {
     mkdirSync(this.config.workspace, { recursive: true });
@@ -218,3 +292,22 @@ function runCommand(
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
+
+const GUEST_FETCH_SCRIPT = `
+const payload = JSON.parse(Buffer.from(process.argv[1], "base64").toString("utf8"));
+const init = {
+  method: payload.method,
+  headers: payload.headers,
+  redirect: "manual"
+};
+if (payload.bodyBase64 && payload.method !== "GET" && payload.method !== "HEAD") {
+  init.body = Buffer.from(payload.bodyBase64, "base64");
+}
+const response = await fetch(payload.url, init);
+const body = Buffer.from(await response.arrayBuffer());
+process.stdout.write(JSON.stringify({
+  status: response.status,
+  headers: Object.fromEntries(response.headers.entries()),
+  bodyBase64: body.toString("base64")
+}));
+`;

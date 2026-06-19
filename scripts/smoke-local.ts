@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadConfig } from "../src/config.js";
 import { PiBridge } from "../src/pi-bridge.js";
+import { PreviewManager } from "../src/previews.js";
 
 const workspace = resolve(".smoke-workspace");
 rmSync(workspace, { recursive: true, force: true });
@@ -9,7 +10,8 @@ mkdirSync(workspace, { recursive: true });
 process.env.AGENTGRANNY_WORKSPACE = workspace;
 process.env.AGENTGRANNY_STATE_DIR = join(workspace, ".agentgranny2");
 
-const bridge = new PiBridge(loadConfig());
+const config = loadConfig();
+const bridge = new PiBridge(config, new PreviewManager(config));
 
 try {
   await bridge.init();

@@ -7,10 +7,10 @@ import {
   type AppendMessage,
   type ThreadMessageLike
 } from "@assistant-ui/react";
-import { CircleStop, GitBranch, Play, RefreshCw, Send, SquarePen, Terminal } from "lucide-react";
+import { CircleStop, ExternalLink, GitBranch, Monitor, Play, RefreshCw, Send, SquarePen, Terminal, Trash2 } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { AppState, ChatMessage, SessionSummary } from "../src/types.js";
+import type { AppState, ChatMessage, PreviewService, SessionSummary } from "../src/types.js";
 import "./styles.css";
 
 const emptyState: AppState = {
@@ -22,6 +22,7 @@ const emptyState: AppState = {
   agentCwd: "",
   sessionDir: "",
   sessions: [],
+  previews: [],
   messages: [],
   events: [],
   isRunning: false,
@@ -35,6 +36,8 @@ const emptyState: AppState = {
 function App() {
   const [state, setState] = useState<AppState>(emptyState);
   const [error, setError] = useState<string | undefined>();
+  const [selectedPreviewId, setSelectedPreviewId] = useState<string | undefined>();
+  const [previewRefreshKey, setPreviewRefreshKey] = useState(0);
 
   const refresh = useCallback(async () => {
     const response = await fetch("/api/state");
@@ -55,6 +58,20 @@ function App() {
   }, [refresh]);
 
   const messages = useMemo(() => state.messages.map(toThreadMessage), [state.messages]);
+  const selectedPreview = useMemo(
+    () => state.previews.find((preview) => preview.id === selectedPreviewId) ?? state.previews[0],
+    [selectedPreviewId, state.previews]
+  );
+
+  useEffect(() => {
+    if (state.previews.length === 0) {
+      setSelectedPreviewId(undefined);
+      return;
+    }
+    if (!selectedPreviewId || !state.previews.some((preview) => preview.id === selectedPreviewId)) {
+      setSelectedPreviewId(state.previews[0].id);
+    }
+  }, [selectedPreviewId, state.previews]);
 
   const runtime = useExternalStoreRuntime<ThreadMessageLike>({
     messages,
@@ -93,6 +110,11 @@ function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: session.path })
     });
+    setState((await response.json()) as AppState);
+  }
+
+  async function removePreview(preview: PreviewService) {
+    const response = await fetch(`/api/previews/${encodeURIComponent(preview.id)}`, { method: "DELETE" });
     setState((await response.json()) as AppState);
   }
 
@@ -226,23 +248,78 @@ function App() {
               </ThreadPrimitive.Root>
             </section>
 
-            <aside className="events-panel">
-              <h2>Events</h2>
-              <div className="event-list">
-                {state.events.length === 0 ? (
-                  <p className="muted">Tool and turn events appear here.</p>
+            <aside className="side-panel">
+              <section className="preview-panel">
+                <div className="panel-header">
+                  <h2>Preview</h2>
+                  <div>
+                    <button type="button" className="panel-icon-button" onClick={() => setPreviewRefreshKey((key) => key + 1)} disabled={!selectedPreview} title="Refresh preview">
+                      <RefreshCw size={15} />
+                    </button>
+                    {selectedPreview && (
+                      <a className="panel-icon-button" href={selectedPreview.path} target="_blank" rel="noreferrer" title="Open preview">
+                        <ExternalLink size={15} />
+                      </a>
+                    )}
+                  </div>
+                </div>
+
+                {state.previews.length === 0 ? (
+                  <div className="preview-empty">
+                    <Monitor size={22} />
+                    <span>No exposed services.</span>
+                  </div>
                 ) : (
-                  state.events.map((event) => (
-                    <article className={event.isError ? "event error" : "event"} key={event.id}>
-                      <div>
-                        <strong>{event.title}</strong>
-                        <span>{new Date(event.createdAt).toLocaleTimeString()}</span>
-                      </div>
-                      {event.detail && <pre>{event.detail}</pre>}
-                    </article>
-                  ))
+                  <>
+                    <div className="preview-tabs">
+                      {state.previews.map((preview) => (
+                        <button
+                          type="button"
+                          className={preview.id === selectedPreview?.id ? "preview-tab active" : "preview-tab"}
+                          key={preview.id}
+                          onClick={() => setSelectedPreviewId(preview.id)}
+                          title={`${preview.name} :${preview.port}`}
+                        >
+                          <span>{preview.name}</span>
+                          <small>:{preview.port}</small>
+                        </button>
+                      ))}
+                      {selectedPreview && (
+                        <button type="button" className="preview-remove" onClick={() => void removePreview(selectedPreview)} title="Remove preview">
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                    {selectedPreview && (
+                      <iframe
+                        className="preview-frame"
+                        key={`${selectedPreview.id}-${previewRefreshKey}`}
+                        src={selectedPreview.path}
+                        title={`Preview ${selectedPreview.name}`}
+                      />
+                    )}
+                  </>
                 )}
-              </div>
+              </section>
+
+              <section className="events-panel">
+                <h2>Events</h2>
+                <div className="event-list">
+                  {state.events.length === 0 ? (
+                    <p className="muted">Tool and turn events appear here.</p>
+                  ) : (
+                    state.events.map((event) => (
+                      <article className={event.isError ? "event error" : "event"} key={event.id}>
+                        <div>
+                          <strong>{event.title}</strong>
+                          <span>{new Date(event.createdAt).toLocaleTimeString()}</span>
+                        </div>
+                        {event.detail && <pre>{event.detail}</pre>}
+                      </article>
+                    ))
+                  )}
+                </div>
+              </section>
             </aside>
           </div>
         </main>
