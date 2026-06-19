@@ -216,6 +216,10 @@ export class PiBridge {
     const messages = mergeLiveMessages(persisted, [...this.liveMessages.values()]);
 
     return {
+      app: {
+        commit: this.config.appCommit,
+        sourceDir: this.config.rootDir
+      },
       workspace: this.config.workspace,
       projectsDir: this.config.projectsDir,
       agentCwd: this.config.agentCwd,

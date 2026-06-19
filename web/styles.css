@@ -166,7 +166,7 @@ code {
 .main {
   min-width: 0;
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto auto 1fr;
 }
 
 .topbar {
@@ -216,6 +216,39 @@ code {
   border-color: #8ab59b;
   background: #edf8f0;
   color: #24593a;
+}
+
+.status-strip {
+  border-bottom: 1px solid #d9ddd5;
+  background: #f7f8f5;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1px;
+}
+
+.status-item {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 10px 14px;
+  background: #fbfbf8;
+}
+
+.status-item span {
+  color: #687069;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.status-item strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #2d3531;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .error-line {
@@ -415,6 +448,10 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .status-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .thread-root,
   .events-panel {
     height: auto;
@@ -432,6 +469,10 @@ code {
 
   .content-grid {
     padding: 12px;
+  }
+
+  .status-strip {
+    grid-template-columns: 1fr;
   }
 
   .message {

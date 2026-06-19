@@ -14,6 +14,9 @@ import type { AppState, ChatMessage, SessionSummary } from "../src/types.js";
 import "./styles.css";
 
 const emptyState: AppState = {
+  app: {
+    sourceDir: ""
+  },
   workspace: "",
   projectsDir: "",
   agentCwd: "",
@@ -170,6 +173,15 @@ function App() {
             </div>
           </header>
 
+          <section className="status-strip" aria-label="Runtime status">
+            <StatusItem label="commit" value={state.app.commit ?? "unknown"} />
+            <StatusItem label="model" value={state.model || "loading"} />
+            <StatusItem label="executor" value={state.runtime.executor} />
+            <StatusItem label="vm" value={state.runtime.vm ? `${state.runtime.vm.name} ${state.runtime.vm.state}` : "none"} />
+            <StatusItem label="workspace" value={state.workspace || "loading"} title={state.workspace} />
+            <StatusItem label="session" value={shortPath(state.session?.path) || "none"} title={state.session?.path} />
+          </section>
+
           {(error || state.error) && <div className="error-line">{error ?? state.error}</div>}
 
           <div className="content-grid">
@@ -179,7 +191,7 @@ function App() {
                   <ThreadPrimitive.Empty>
                     <div className="empty-thread">
                       <h2>Ask Pi to work in this workspace.</h2>
-                      <p>Messages go straight to Pi. The app root is protected; project files live under the agent cwd.</p>
+                      <p>Messages go straight to Pi. Keep the loop simple and inspect what changes.</p>
                     </div>
                   </ThreadPrimitive.Empty>
                   <ThreadPrimitive.Messages>
@@ -239,6 +251,15 @@ function App() {
   );
 }
 
+function StatusItem({ label, value, title }: { label: string; value: string; title?: string }) {
+  return (
+    <div className="status-item">
+      <span>{label}</span>
+      <strong title={title ?? value}>{value}</strong>
+    </div>
+  );
+}
+
 function toThreadMessage(message: ChatMessage): ThreadMessageLike {
   return {
     id: message.id,
@@ -267,6 +288,12 @@ function appendMessageText(message: AppendMessage): string {
 
 function readError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function shortPath(path: string | undefined): string {
+  if (!path) return "";
+  const parts = path.split("/").filter(Boolean);
+  return parts.length <= 2 ? path : `.../${parts.slice(-2).join("/")}`;
 }
 
 createRoot(document.getElementById("root")!).render(

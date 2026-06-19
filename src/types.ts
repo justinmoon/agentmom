@@ -28,6 +28,10 @@ export type SessionSummary = {
 };
 
 export type AppState = {
+  app: {
+    commit?: string;
+    sourceDir: string;
+  };
   workspace: string;
   projectsDir: string;
   agentCwd: string;

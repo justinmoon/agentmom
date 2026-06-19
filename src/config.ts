@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export type AppConfig = {
+  appCommit?: string;
   host: string;
   port: number;
   executor: "local" | "smolvm";
@@ -62,6 +64,18 @@ function numberFromEnv(name: string, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+function readGitCommit(): string | undefined {
+  try {
+    return execFileSync("git", ["rev-parse", "--short=12", "HEAD"], {
+      cwd: rootDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
 export function loadConfig(): AppConfig {
   const workspace = resolve(process.env.AGENTGRANNY_WORKSPACE ?? process.cwd());
   const projectsDir = resolve(process.env.AGENTGRANNY_PROJECTS_DIR ?? `${workspace}/projects`);
@@ -76,6 +90,7 @@ export function loadConfig(): AppConfig {
   const stateDir = resolve(process.env.AGENTGRANNY_STATE_DIR ?? `${workspace}/.agentgranny2`);
 
   return {
+    appCommit: process.env.AGENTGRANNY_COMMIT ?? readGitCommit(),
     host: process.env.AGENTGRANNY_HOST ?? "127.0.0.1",
     port: numberFromEnv("AGENTGRANNY_PORT", 7392),
     executor: process.env.AGENTGRANNY_EXECUTOR === "local" ? "local" : "smolvm",

@@ -28,6 +28,7 @@ const server = createServer(async (req, res) => {
     if (url.pathname === "/api/health") {
       return sendJson(res, {
         ok: true,
+        commit: config.appCommit,
         workspace: config.workspace,
         agentCwd: config.agentCwd,
         executor: config.executor
