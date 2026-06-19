@@ -85,6 +85,7 @@ Runtime rule:
 ## After Trustworthy Local Loop
 
 [ ] Add process ergonomics only if Pi `bash` is insufficient for dogfooding: clearer long-running command display, stop button, output truncation policy, and process cleanup.
+[x] Package Granny2 with Nix so deployment can reference a store path instead of a mutable checkout.
 [ ] Deploy the current single-user smolvm app to `granny.agentmom.xyz` with the smallest NixOS/Caddy/systemd change that fits Agent Mom's host layout.
 [ ] Put production workspace/state under `/var/lib/agentgranny2`, with `.env` or an age secret for OpenRouter.
 [ ] Keep deploy initially single-instance and unauthenticated only if it is behind existing Agent Mom protection; otherwise add basic auth at Caddy before exposing it.
@@ -114,3 +115,4 @@ Runtime rule:
 - Verified server restart resumes the same Pi JSONL session and transcript from `.agentgranny2/sessions`.
 - `scripts/smoke-local.ts` covers both no-tool inference and a real Pi `write` tool invocation in an isolated workspace.
 - Verified default smolvm runtime on 2026-06-18: API state showed `agentgranny2-default` running, UI rendered `Runtime smolvm`, and an end-to-end Pi turn called `bash` with output `/workspace` and `v24.17.0`.
+- Verified `nix build .#agentgranny2`; packaged binary served `/api/health` with local executor on port 7393.

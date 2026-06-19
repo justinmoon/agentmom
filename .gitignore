@@ -1,5 +1,6 @@
 node_modules/
 dist/
+result
 .direnv/
 .agentgranny2/
 .smoke-workspace/

@@ -5,7 +5,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
   };
 
-  outputs = { nixpkgs, ... }:
+  outputs = { self, nixpkgs, ... }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forAllSystems = f:
@@ -22,6 +22,18 @@
           shellHook = ''
             export IN_NIX_SHELL=1
           '';
+        };
+      });
+
+      packages = forAllSystems ({ pkgs, ... }: rec {
+        agentgranny2 = pkgs.callPackage ./nix/package.nix { };
+        default = agentgranny2;
+      });
+
+      apps = forAllSystems ({ pkgs, system, ... }: {
+        default = {
+          type = "app";
+          program = "${self.packages.${system}.agentgranny2}/bin/agentgranny2";
         };
       });
     };
