@@ -141,6 +141,7 @@ in
         pkgs.curl
         pkgs.e2fsprogs
         pkgs.file
+        pkgs.git
         pkgs.go-containerregistry
         pkgs.gnutar
       ];
