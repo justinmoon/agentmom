@@ -86,9 +86,9 @@ Runtime rule:
 
 [ ] Add process ergonomics only if Pi `bash` is insufficient for dogfooding: clearer long-running command display, stop button, output truncation policy, and process cleanup.
 [x] Package Granny2 with Nix so deployment can reference a store path instead of a mutable checkout.
-[ ] Deploy the current single-user smolvm app to `granny.agentmom.xyz` with the smallest NixOS/Caddy/systemd change that fits Agent Mom's host layout.
-[ ] Put production workspace/state under `/var/lib/agentgranny2`, with `.env` or an age secret for OpenRouter.
-[ ] Keep deploy initially single-instance and unauthenticated only if it is behind existing Agent Mom protection; otherwise add basic auth at Caddy before exposing it.
+[~] Deploy the current single-user smolvm app to `granny.agentmom.xyz` with the smallest NixOS/Caddy/systemd change that fits Agent Mom's host layout.
+[x] Put production workspace/state under `/var/lib/agentgranny2`, with the existing Agent Mom age secret for OpenRouter.
+[~] Keep deploy single-instance and protect it with Caddy basic auth before exposing it.
 [ ] Add a live deploy smoke: health endpoint, UI render, and one `bash` turn proving `/workspace`.
 [ ] Add Absurd only after direct Pi sessions are reliable. First use: durable background turn execution for web requests that should survive server restart.
 [ ] Add Postgres only if Absurd or multi-session metadata requires it. Keep Pi JSONL sessions as the agent transcript unless there is a concrete reason to migrate.
@@ -107,6 +107,7 @@ Runtime rule:
 - Implementation uses the published `@assistant-ui/react` package for runtime because `/Users/justin/code/assistant-ui` is a source checkout without package `dist` outputs; keep the checkout as the reference source.
 - `src/pi-bridge.ts` is the intentional boundary: Pi owns agent state/session/tools, Granny2 owns HTTP/SSE/UI projection only.
 - `src/smolvm.ts` shells out to the `smolvm` CLI instead of depending on the unpublished `smolvm-embedded` Node SDK.
+- Deployment packages the upstream `smolvm` v1.1.1 release tarball, not the stale local checkout. The release includes `smolvm-bin`, runtime libs, disk templates, and `agent-rootfs`.
 - Default smolvm image is `node:24-bookworm`; the host app remains Nix-managed, the guest does not run Nix by default.
 - `scripts/smoke-smolvm.ts` verifies smolvm command execution and the host-mounted `/workspace`.
 - `.env` was copied into the repo root for local dev and ignored by git; no cross-repo env file dependency.

@@ -30,15 +30,16 @@ export type AppConfig = {
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-function readEnvFileValue(path: string, key: string): string | undefined {
+function readOpenRouterKeyFile(path: string): string | undefined {
   if (!existsSync(path)) return undefined;
 
-  for (const rawLine of readFileSync(path, "utf8").split(/\r?\n/)) {
+  const content = readFileSync(path, "utf8");
+  for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
 
     const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
-    if (!match || match[1] !== key) continue;
+    if (!match || match[1] !== "OPENROUTER_API_KEY") continue;
 
     let value = match[2].trim();
     if (
@@ -50,7 +51,8 @@ function readEnvFileValue(path: string, key: string): string | undefined {
     return value;
   }
 
-  return undefined;
+  const rawKey = content.trim();
+  return rawKey && !rawKey.includes("\n") ? rawKey : undefined;
 }
 
 function numberFromEnv(name: string, fallback: number): number {
@@ -65,8 +67,7 @@ export function loadConfig(): AppConfig {
   const projectsDir = resolve(process.env.AGENTGRANNY_PROJECTS_DIR ?? `${workspace}/projects`);
   const agentCwd = resolve(process.env.AGENTGRANNY_AGENT_CWD ?? projectsDir);
   const openRouterEnvFile = resolve(process.env.AGENTGRANNY_OPENROUTER_ENV_FILE ?? `${rootDir}/.env`);
-  const openRouterApiKey =
-    process.env.OPENROUTER_API_KEY ?? readEnvFileValue(openRouterEnvFile, "OPENROUTER_API_KEY");
+  const openRouterApiKey = process.env.OPENROUTER_API_KEY ?? readOpenRouterKeyFile(openRouterEnvFile);
 
   if (openRouterApiKey && !process.env.OPENROUTER_API_KEY) {
     process.env.OPENROUTER_API_KEY = openRouterApiKey;

@@ -25,10 +25,17 @@
         };
       });
 
-      packages = forAllSystems ({ pkgs, ... }: rec {
-        agentgranny2 = pkgs.callPackage ./nix/package.nix { };
-        default = agentgranny2;
-      });
+      packages = forAllSystems ({ pkgs, system, ... }:
+        let
+          smolvmReleaseSystems = [ "aarch64-linux" "x86_64-linux" ];
+          agentgranny2 = pkgs.callPackage ./nix/package.nix { };
+        in
+        {
+          inherit agentgranny2;
+          default = agentgranny2;
+        } // nixpkgs.lib.optionalAttrs (builtins.elem system smolvmReleaseSystems) {
+          smolvm = pkgs.callPackage ./nix/smolvm-release.nix { };
+        });
 
       apps = forAllSystems ({ pkgs, system, ... }: {
         default = {
@@ -36,5 +43,8 @@
           program = "${self.packages.${system}.agentgranny2}/bin/agentgranny2";
         };
       });
+
+      nixosModules.default = self.nixosModules.agentgranny2;
+      nixosModules.agentgranny2 = import ./nix/module.nix { inherit self; };
     };
 }
