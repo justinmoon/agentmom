@@ -47,6 +47,8 @@ export type DeploymentRecord = {
   containerPort: number;
   hostPort: number;
   urlPath: string;
+  url?: string;
+  urlHost?: string;
   status: "building" | "running" | "failed" | "stopped";
   createdAt: string;
   updatedAt: string;

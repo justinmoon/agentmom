@@ -61,6 +61,12 @@ in
       description = "File containing either a raw OpenRouter API key or OPENROUTER_API_KEY=...";
     };
 
+    deploymentBaseDomain = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Optional base domain for slug-based deployment hosts.";
+    };
+
     model = lib.mkOption {
       type = lib.types.str;
       default = "anthropic/claude-sonnet-4.5";
@@ -122,6 +128,8 @@ in
       extraGroups = [ "kvm" ];
       home = cfg.stateDir;
       createHome = true;
+      subUidRanges = [{ startUid = 200000; count = 65536; }];
+      subGidRanges = [{ startGid = 200000; count = 65536; }];
     };
 
     systemd.tmpfiles.rules = [
@@ -170,6 +178,9 @@ in
           NODE_ENV = "production";
           XDG_CACHE_HOME = "${cfg.stateDir}/xdg-cache";
           XDG_DATA_HOME = "${cfg.stateDir}/xdg-data";
+        }
+        // lib.optionalAttrs (cfg.deploymentBaseDomain != null) {
+          AGENTGRANNY_DEPLOYMENT_BASE_DOMAIN = cfg.deploymentBaseDomain;
         }
         // lib.optionalAttrs (cfg.openRouterKeyFile != null) {
           AGENTGRANNY_OPENROUTER_ENV_FILE = toString cfg.openRouterKeyFile;

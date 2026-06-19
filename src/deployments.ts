@@ -10,6 +10,8 @@ type DeploymentState = {
   deployments: DeploymentRecord[];
 };
 
+export type DeploymentRouteMode = "path" | "host";
+
 export type PublishDeploymentInput = {
   path: string;
   slug?: string;
@@ -27,8 +29,9 @@ export class DeploymentManager {
     mkdirSync(this.deploymentDir, { recursive: true });
   }
 
-  list(): DeploymentRecord[] {
-    return this.readState().deployments.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  async list(): Promise<DeploymentRecord[]> {
+    const deployments = await Promise.all(this.readState().deployments.map((entry) => this.reconcile(entry)));
+    return deployments.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
   async publish(input: PublishDeploymentInput): Promise<DeploymentRecord> {
@@ -63,7 +66,7 @@ export class DeploymentManager {
     displayName: string;
   }): Promise<DeploymentRecord> {
     const now = new Date().toISOString();
-    const existing = this.find(input.slug);
+    const existing = await this.find(input.slug);
     const hostPort = await allocatePort();
     const version = Date.now().toString(36);
     const image = `localhost/agentgranny2/${input.slug}:${version}`;
@@ -114,6 +117,7 @@ export class DeploymentManager {
         `127.0.0.1:${hostPort}:${input.containerPort}`,
         image
       ]);
+      await this.waitUntilReady(hostPort, container);
 
       deployment = {
         ...deployment,
@@ -122,6 +126,7 @@ export class DeploymentManager {
         buildLog: truncateLog(`${deployment.buildLog ?? ""}\n${run.output}`.trim()),
         updatedAt: new Date().toISOString()
       };
+      deployment = this.decorate(deployment);
       this.upsert(deployment);
       await this.removeContainerAndImage(existing);
       return deployment;
@@ -149,7 +154,7 @@ export class DeploymentManager {
 
   async remove(slug: string): Promise<boolean> {
     return this.withLock(slug, async () => {
-      const deployment = this.find(slug);
+      const deployment = await this.find(slug);
       if (!deployment) return false;
       await this.removeContainerAndImage(deployment);
       const state = this.readState();
@@ -160,7 +165,7 @@ export class DeploymentManager {
   }
 
   async logs(slug: string, tail = 200): Promise<string> {
-    const deployment = this.find(slug);
+    const deployment = await this.find(slug);
     if (!deployment) throw new Error(`Unknown deployment: ${slug}`);
     const result = await runCommand(
       this.config.podman.command,
@@ -170,8 +175,12 @@ export class DeploymentManager {
     return result.output.trim();
   }
 
-  async fetch(slug: string, request: PreviewFetchRequest): Promise<PreviewFetchResponse> {
-    const deployment = this.find(slug);
+  async fetch(
+    slug: string,
+    request: PreviewFetchRequest,
+    mode: DeploymentRouteMode = "path"
+  ): Promise<PreviewFetchResponse> {
+    const deployment = await this.find(slug);
     if (!deployment) {
       return textResponse(404, `Unknown deployment: ${slug}`);
     }
@@ -197,21 +206,93 @@ export class DeploymentManager {
       return textResponse(502, `Deployment proxy failed: ${message}`);
     }
 
-    return rewriteDeploymentResponse(deployment, {
-      status: response.status,
-      headers: Object.fromEntries(response.headers.entries()),
-      body: Buffer.from(await response.arrayBuffer())
-    });
+    return rewriteDeploymentResponse(
+      deployment,
+      {
+        status: response.status,
+        headers: Object.fromEntries(response.headers.entries()),
+        body: Buffer.from(await response.arrayBuffer())
+      },
+      mode
+    );
   }
 
-  private find(slug: string): DeploymentRecord | undefined {
-    return this.readState().deployments.find((deployment) => deployment.slug === slug);
+  private async find(slug: string): Promise<DeploymentRecord | undefined> {
+    const deployment = this.readState().deployments.find((entry) => entry.slug === slug);
+    return deployment ? this.reconcile(deployment) : undefined;
   }
 
   private upsert(deployment: DeploymentRecord): void {
     const state = this.readState();
-    state.deployments = [deployment, ...state.deployments.filter((entry) => entry.slug !== deployment.slug)];
+    state.deployments = [this.decorate(deployment), ...state.deployments.filter((entry) => entry.slug !== deployment.slug)];
     this.writeState(state);
+  }
+
+  private decorate(deployment: DeploymentRecord): DeploymentRecord {
+    const baseDomain = this.config.deploymentBaseDomain;
+    const urlHost = baseDomain ? `${deployment.slug}.${baseDomain}` : undefined;
+    return {
+      ...deployment,
+      urlPath: `/deploy/${deployment.slug}/`,
+      urlHost,
+      url: urlHost ? `https://${urlHost}/` : `/deploy/${deployment.slug}/`
+    };
+  }
+
+  private async reconcile(deployment: DeploymentRecord): Promise<DeploymentRecord> {
+    const decorated = this.decorate(deployment);
+    if (decorated.status !== "running") return decorated;
+
+    const running = await this.containerIsRunning(decorated.container);
+    if (running) return decorated;
+
+    const stopped: DeploymentRecord = {
+      ...decorated,
+      status: "stopped",
+      error: "Container is not running",
+      updatedAt: new Date().toISOString()
+    };
+    this.upsert(stopped);
+    return stopped;
+  }
+
+  private async containerIsRunning(container: string): Promise<boolean> {
+    const result = await runCommand(
+      this.config.podman.command,
+      ["container", "inspect", "--format", "{{.State.Running}}", container],
+      { allowFailure: true }
+    );
+    return result.exitCode === 0 && result.output.trim() === "true";
+  }
+
+  private async waitUntilReady(hostPort: number, container: string): Promise<void> {
+    const timeoutMs = Number.parseInt(process.env.AGENTGRANNY_DEPLOYMENT_READY_TIMEOUT_MS ?? "30000", 10);
+    const deadline = Date.now() + (Number.isFinite(timeoutMs) ? timeoutMs : 30_000);
+    let lastError = "no response yet";
+
+    while (Date.now() < deadline) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 1000);
+      try {
+        const response = await fetch(`http://127.0.0.1:${hostPort}/`, {
+          method: "GET",
+          signal: controller.signal
+        });
+        await response.arrayBuffer();
+        if (response.status < 500) return;
+        lastError = `HTTP ${response.status}`;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      } finally {
+        clearTimeout(timeout);
+      }
+      await sleep(250);
+    }
+
+    const logs = await runCommand(this.config.podman.command, ["logs", "--tail", "80", container], { allowFailure: true });
+    throw new Error(
+      `Deployment did not become ready on 127.0.0.1:${hostPort}: ${lastError}\n${truncateLog(logs.output.trim(), 4000)}`
+    );
   }
 
   private resolveProjectPath(inputPath: string): string {
@@ -283,7 +364,29 @@ export function deploymentPath(pathname: string): { slug: string; upstreamPath: 
   return { slug, upstreamPath };
 }
 
+export function deploymentSlugFromHost(hostHeader: string | undefined, baseDomain: string | undefined): string | undefined {
+  if (!hostHeader || !baseDomain) return undefined;
+
+  const host = hostHeader.split(":")[0]?.toLowerCase().replace(/\.$/, "");
+  const base = baseDomain.toLowerCase().replace(/\.$/, "");
+  if (!host || host === base || !host.endsWith(`.${base}`)) return undefined;
+
+  const slug = host.slice(0, -(base.length + 1));
+  if (!slug || slug.includes(".")) return undefined;
+  return slugify(slug) === slug ? slug : undefined;
+}
+
+export function isAllowedDeploymentDomain(domain: string | undefined, baseDomain: string | undefined): boolean {
+  if (!domain || !baseDomain) return false;
+
+  const host = domain.split(":")[0]?.toLowerCase().replace(/\.$/, "");
+  const base = baseDomain.toLowerCase().replace(/\.$/, "");
+  if (!host) return false;
+  return host === base || deploymentSlugFromHost(host, base) !== undefined;
+}
+
 type CommandResult = {
+  exitCode: number;
   output: string;
 };
 
@@ -308,12 +411,13 @@ function runCommand(
     child.stderr.on("data", (data: Buffer) => chunks.push(data));
     child.on("error", reject);
     child.on("close", (exitCode) => {
+      const code = exitCode ?? 1;
       const output = Buffer.concat(chunks).toString("utf8");
-      if (exitCode !== 0 && !options.allowFailure) {
-        reject(new Error(`${command} ${args.join(" ")} failed (${exitCode}): ${truncateLog(output)}`));
+      if (code !== 0 && !options.allowFailure) {
+        reject(new Error(`${command} ${args.join(" ")} failed (${code}): ${truncateLog(output)}`));
         return;
       }
-      resolvePromise({ output });
+      resolvePromise({ exitCode: code, output });
     });
   });
 }
@@ -334,12 +438,13 @@ function allocatePort(): Promise<number> {
 
 function rewriteDeploymentResponse(
   deployment: DeploymentRecord,
-  response: PreviewFetchResponse
+  response: PreviewFetchResponse,
+  mode: DeploymentRouteMode
 ): PreviewFetchResponse {
   const headers = cleanResponseHeaders(response.headers);
-  rewriteLocationHeader(headers, deployment);
+  rewriteLocationHeader(headers, deployment, mode);
   const contentType = headers["content-type"] ?? "";
-  if (!shouldRewrite(contentType)) {
+  if (mode !== "path" || !shouldRewrite(contentType)) {
     return { ...response, headers };
   }
 
@@ -363,20 +468,27 @@ function cleanResponseHeaders(headers: Record<string, string>): Record<string, s
   return result;
 }
 
-function rewriteLocationHeader(headers: Record<string, string>, deployment: DeploymentRecord): void {
+function rewriteLocationHeader(
+  headers: Record<string, string>,
+  deployment: DeploymentRecord,
+  mode: DeploymentRouteMode
+): void {
   const location = headers.location;
   if (!location) return;
 
-  const prefix = `/deploy/${deployment.slug}`;
+  const prefix = mode === "path" ? `/deploy/${deployment.slug}` : "";
   if (location.startsWith("/")) {
-    headers.location = `${prefix}${location}`;
+    headers.location = mode === "path" ? `${prefix}${location}` : location;
     return;
   }
 
   try {
     const url = new URL(location);
     if (url.hostname === "127.0.0.1" && url.port === String(deployment.hostPort)) {
-      headers.location = `${prefix}${url.pathname}${url.search}${url.hash}`;
+      headers.location =
+        mode === "path" || !deployment.urlHost
+          ? `${prefix}${url.pathname}${url.search}${url.hash}`
+          : `https://${deployment.urlHost}${url.pathname}${url.search}${url.hash}`;
     }
   } catch {
     // Relative redirects like "next" are already relative to /deploy/<slug>/.
@@ -417,6 +529,10 @@ function textResponse(status: number, text: string): PreviewFetchResponse {
     },
     body: Buffer.from(text, "utf8")
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 
 function slugify(value: string): string {

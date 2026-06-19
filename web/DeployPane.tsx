@@ -114,9 +114,16 @@ export function DeployPane({
                 <small>
                   {deployment.slug} · {deployment.hostPort}:{deployment.containerPort}
                 </small>
+                {deployment.urlHost && <small>{deployment.urlHost}</small>}
               </div>
               <div className="deployment-actions">
-                <a className="panel-icon-button" href={deployment.urlPath} target="_blank" rel="noreferrer" title="Open deployment">
+                <a
+                  className="panel-icon-button"
+                  href={deployment.url ?? deployment.urlPath}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Open deployment"
+                >
                   <ExternalLink size={15} />
                 </a>
                 <button

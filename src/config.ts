@@ -15,6 +15,7 @@ export type AppConfig = {
   agentDir: string;
   sessionDir: string;
   deploymentDir: string;
+  deploymentBaseDomain?: string;
   openRouterModel: string;
   openRouterEnvFile: string;
   openRouterApiKey?: string;
@@ -69,6 +70,12 @@ function numberFromEnv(name: string, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+function domainFromEnv(name: string): string | undefined {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (!raw) return undefined;
+  return raw.replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/\.$/, "");
+}
+
 function readGitCommit(): string | undefined {
   try {
     return execFileSync("git", ["-c", `safe.directory=${rootDir}`, "rev-parse", "--short=12", "HEAD"], {
@@ -106,6 +113,7 @@ export function loadConfig(): AppConfig {
     agentDir: resolve(process.env.AGENTGRANNY_AGENT_DIR ?? `${stateDir}/pi`),
     sessionDir: resolve(process.env.AGENTGRANNY_SESSION_DIR ?? `${stateDir}/sessions`),
     deploymentDir: resolve(process.env.AGENTGRANNY_DEPLOYMENT_DIR ?? `${stateDir}/deployments`),
+    deploymentBaseDomain: domainFromEnv("AGENTGRANNY_DEPLOYMENT_BASE_DOMAIN"),
     openRouterModel: process.env.AGENTGRANNY_OPENROUTER_MODEL ?? "anthropic/claude-sonnet-4.5",
     openRouterEnvFile,
     openRouterApiKey,

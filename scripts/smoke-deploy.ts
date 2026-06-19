@@ -10,6 +10,8 @@ const projectPath = join(agentCwd, "demo");
 process.env.AGENTGRANNY_WORKSPACE = workspace;
 process.env.AGENTGRANNY_AGENT_CWD = agentCwd;
 process.env.AGENTGRANNY_DEPLOYMENT_DIR = join(workspace, ".agentgranny2", "deployments");
+process.env.AGENTGRANNY_DEPLOYMENT_BASE_DOMAIN = "granny-stage.agentmom.xyz";
+process.env.AGENTGRANNY_DEPLOYMENT_READY_TIMEOUT_MS = "2500";
 process.env.AGENTGRANNY_PODMAN_COMMAND ??= "podman";
 
 mkdirSync(projectPath, { recursive: true });
@@ -18,7 +20,7 @@ writeApp("DEPLOY_SMOKE_OK");
 writeValidDockerfile();
 
 const { loadConfig } = await import("../src/config.js");
-const { DeploymentManager } = await import("../src/deployments.js");
+const { DeploymentManager, deploymentSlugFromHost, isAllowedDeploymentDomain } = await import("../src/deployments.js");
 
 const manager = new DeploymentManager(loadConfig());
 let deployedSlug: string | undefined;
@@ -26,6 +28,21 @@ let deployedSlug: string | undefined;
 try {
   const deployment = await manager.publish({ path: "demo", slug: "smoke-demo", port: 3000 });
   deployedSlug = deployment.slug;
+  if (deployment.url !== "https://smoke-demo.granny-stage.agentmom.xyz/") {
+    throw new Error(`Unexpected deployment URL: ${deployment.url}`);
+  }
+  if (deploymentSlugFromHost("smoke-demo.granny-stage.agentmom.xyz", "granny-stage.agentmom.xyz") !== "smoke-demo") {
+    throw new Error("Deployment host parser did not recognize slug host");
+  }
+  if (deploymentSlugFromHost("granny-stage.agentmom.xyz", "granny-stage.agentmom.xyz") !== undefined) {
+    throw new Error("Deployment host parser should not route the base app host");
+  }
+  if (!isAllowedDeploymentDomain("smoke-demo.granny-stage.agentmom.xyz", "granny-stage.agentmom.xyz")) {
+    throw new Error("TLS ask helper did not allow deployment host");
+  }
+  if (isAllowedDeploymentDomain("nested.smoke-demo.granny-stage.agentmom.xyz", "granny-stage.agentmom.xyz")) {
+    throw new Error("TLS ask helper should not allow nested deployment hosts");
+  }
 
   const page = await waitForPage(() => manager.fetch(deployment.slug, {
     method: "GET",
@@ -48,6 +65,23 @@ try {
   if (redirect.status !== 302 || redirect.headers.location !== "/deploy/smoke-demo/final") {
     throw new Error(`Deployment proxy did not rewrite redirects: ${JSON.stringify(redirect.headers)}`);
   }
+  const hostPage = await manager.fetch(deployment.slug, {
+    method: "GET",
+    path: "/",
+    headers: {}
+  }, "host");
+  const hostHtml = hostPage.body.toString("utf8");
+  if (hostPage.status !== 200 || !hostHtml.includes('href="/asset.css"')) {
+    throw new Error(`Host deployment proxy unexpectedly rewrote root paths: ${hostHtml.slice(0, 300)}`);
+  }
+  const hostRedirect = await manager.fetch(deployment.slug, {
+    method: "GET",
+    path: "/redirect",
+    headers: {}
+  }, "host");
+  if (hostRedirect.status !== 302 || hostRedirect.headers.location !== "/final") {
+    throw new Error(`Host deployment proxy unexpectedly rewrote root redirects: ${JSON.stringify(hostRedirect.headers)}`);
+  }
 
   const logs = await manager.logs(deployment.slug, 50);
   if (!logs.includes("smoke app listening")) {
@@ -65,7 +99,7 @@ try {
     throw new Error("Broken redeploy unexpectedly succeeded");
   }
 
-  const preserved = manager.list().find((entry) => entry.slug === deployment.slug);
+  const preserved = (await manager.list()).find((entry) => entry.slug === deployment.slug);
   if (!preserved || preserved.status !== "running") {
     throw new Error(`Failed redeploy did not preserve running state: ${JSON.stringify(preserved)}`);
   }
@@ -81,6 +115,25 @@ try {
     throw new Error(`Preserved deployment stopped serving: ${preservedPage.body.toString("utf8").slice(0, 300)}`);
   }
 
+  writeWrongPortDockerfile();
+  let failedRuntimeRedeploy = false;
+  try {
+    await manager.publish({ path: "demo", slug: "smoke-demo", port: 3000 });
+  } catch {
+    failedRuntimeRedeploy = true;
+  }
+  if (!failedRuntimeRedeploy) {
+    throw new Error("Wrong-port redeploy unexpectedly succeeded");
+  }
+
+  const runtimePreserved = (await manager.list()).find((entry) => entry.slug === deployment.slug);
+  if (!runtimePreserved || runtimePreserved.status !== "running") {
+    throw new Error(`Runtime failed redeploy did not preserve running state: ${JSON.stringify(runtimePreserved)}`);
+  }
+  if (runtimePreserved.container !== deployment.container || runtimePreserved.hostPort !== deployment.hostPort) {
+    throw new Error(`Runtime failed redeploy changed the active deployment: ${JSON.stringify(runtimePreserved)}`);
+  }
+
   writeApp("DEPLOY_SMOKE_OK_V2");
   writeValidDockerfile();
   const redeployed = await manager.publish({ path: "demo", slug: "smoke-demo", port: 3000 });
@@ -94,6 +147,20 @@ try {
   }
   await expectMissing(["container", "exists", deployment.container], "old deployment container still exists");
   await expectMissing(["image", "exists", deployment.image], "old deployment image still exists");
+
+  await runPodman(["rm", "-f", redeployed.container]);
+  const stoppedResponse = await manager.fetch(redeployed.slug, {
+    method: "GET",
+    path: "/",
+    headers: {}
+  });
+  if (stoppedResponse.status !== 503 || !stoppedResponse.body.toString("utf8").includes("stopped")) {
+    throw new Error(`Stopped deployment did not reconcile on fetch: ${stoppedResponse.status}`);
+  }
+  const stopped = (await manager.list()).find((entry) => entry.slug === redeployed.slug);
+  if (stopped?.status !== "stopped") {
+    throw new Error(`Stopped deployment did not reconcile on list: ${JSON.stringify(stopped)}`);
+  }
 
   await manager.remove(redeployed.slug);
   deployedSlug = undefined;
@@ -149,6 +216,16 @@ function writeBrokenDockerfile(): void {
     join(projectPath, "Dockerfile"),
     `FROM docker.io/library/node:24-alpine
 THIS_IS_NOT_VALID_DOCKERFILE_SYNTAX
+`,
+    "utf8"
+  );
+}
+
+function writeWrongPortDockerfile(): void {
+  writeFileSync(
+    join(projectPath, "Dockerfile"),
+    `FROM docker.io/library/node:24-alpine
+CMD ["node", "-e", "require('node:http').createServer((req,res)=>res.end('wrong-port')).listen(3011,'0.0.0.0')"]
 `,
     "utf8"
   );

@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { loadConfig } from "./config.js";
-import { DeploymentManager, deploymentPath } from "./deployments.js";
+import { DeploymentManager, deploymentPath, deploymentSlugFromHost, isAllowedDeploymentDomain } from "./deployments.js";
 import { PiBridge } from "./pi-bridge.js";
 import { PreviewManager, previewPath, requestHeaders } from "./previews.js";
 import type { AppState } from "./types.js";
@@ -28,6 +28,34 @@ await bridge.init();
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? `${config.host}:${config.port}`}`);
+
+    if (url.pathname === "/api/tls-ask" && req.method === "GET") {
+      const domain = url.searchParams.get("domain") ?? undefined;
+      if (isAllowedDeploymentDomain(domain, config.deploymentBaseDomain)) {
+        res.writeHead(200);
+        res.end("ok");
+      } else {
+        res.writeHead(403);
+        res.end("forbidden");
+      }
+      return;
+    }
+
+    const deploymentSlug = deploymentSlugFromHost(req.headers.host, config.deploymentBaseDomain);
+    if (deploymentSlug) {
+      const body = await readBody(req);
+      const response = await deployments.fetch(
+        deploymentSlug,
+        {
+          method: req.method ?? "GET",
+          path: `${url.pathname}${url.search}`,
+          headers: requestHeaders(req.headers),
+          body: body.length > 0 ? body : undefined
+        },
+        "host"
+      );
+      return sendProxyResponse(res, response.status, response.headers, req.method === "HEAD" ? undefined : response.body);
+    }
 
     if (url.pathname.startsWith("/deploy/") && !url.pathname.slice("/deploy/".length).includes("/")) {
       res.writeHead(302, { Location: `${url.pathname}/${url.search}` });
