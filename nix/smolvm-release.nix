@@ -40,6 +40,7 @@ stdenv.mkDerivation {
   sourceRoot = releaseName;
 
   nativeBuildInputs = [ makeWrapper patchelf ];
+  dontFixup = true;
 
   installPhase = ''
     runHook preInstall
