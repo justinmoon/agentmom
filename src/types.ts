@@ -85,6 +85,7 @@ export type PreviewService = {
 
 export type DeploymentRecord = {
   id: string;
+  workspaceId?: string;
   slug: string;
   name: string;
   projectPath: string;

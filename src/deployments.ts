@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import type { AppConfig } from "./config.js";
 import type { DeploymentRecord } from "./types.js";
@@ -12,10 +12,17 @@ type DeploymentState = {
 
 export type DeploymentRouteMode = "path" | "host";
 
+export type DeploymentScope = {
+  workspaceId?: string;
+  workspaceDirName?: string;
+};
+
 export type PublishDeploymentInput = {
   path: string;
   slug?: string;
   port?: number;
+  workspaceId?: string;
+  workspaceDirName?: string;
 };
 
 export class DeploymentManager {
@@ -29,9 +36,11 @@ export class DeploymentManager {
     mkdirSync(this.deploymentDir, { recursive: true });
   }
 
-  async list(): Promise<DeploymentRecord[]> {
+  async list(scope: DeploymentScope = {}): Promise<DeploymentRecord[]> {
     const deployments = await Promise.all(this.readState().deployments.map((entry) => this.reconcile(entry)));
-    return deployments.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    return deployments
+      .filter((deployment) => this.matchesScope(deployment, scope))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
   async publish(input: PublishDeploymentInput): Promise<DeploymentRecord> {
@@ -54,7 +63,9 @@ export class DeploymentManager {
         projectPath,
         slug,
         containerPort,
-        displayName: input.slug?.trim() || basename(projectPath)
+        displayName: input.slug?.trim() || basename(projectPath),
+        workspaceId: input.workspaceId,
+        workspaceDirName: input.workspaceDirName
       })
     );
   }
@@ -64,9 +75,25 @@ export class DeploymentManager {
     slug: string;
     containerPort: number;
     displayName: string;
+    workspaceId?: string;
+    workspaceDirName?: string;
   }): Promise<DeploymentRecord> {
     const now = new Date().toISOString();
-    const existing = await this.find(input.slug);
+    let existing = await this.find(input.slug);
+    if (existing && input.workspaceId && !existing.workspaceId) {
+      if (this.matchesScope(existing, { workspaceId: input.workspaceId, workspaceDirName: input.workspaceDirName })) {
+        existing = { ...existing, workspaceId: input.workspaceId };
+      } else if (existing.status === "running") {
+        throw new Error(`Deployment slug is already used by a legacy deployment: ${input.slug}`);
+      } else {
+        await this.removeContainerAndImage(existing);
+        this.deleteRecord(existing.slug);
+        existing = undefined;
+      }
+    }
+    if (!this.matchesScope(existing, { workspaceId: input.workspaceId, workspaceDirName: input.workspaceDirName })) {
+      throw new Error(`Deployment slug is already used by another workspace: ${input.slug}`);
+    }
     const hostPort = await allocatePort();
     const version = Date.now().toString(36);
     const image = `localhost/agentgranny2/${input.slug}:${version}`;
@@ -74,6 +101,7 @@ export class DeploymentManager {
 
     let deployment: DeploymentRecord = {
       id: existing?.id ?? input.slug,
+      workspaceId: input.workspaceId,
       slug: input.slug,
       name: input.displayName,
       projectPath: input.projectPath,
@@ -107,6 +135,8 @@ export class DeploymentManager {
         "-d",
         "--name",
         container,
+        "--log-driver",
+        "k8s-file",
         "--label",
         `agentgranny2.deployment=${input.slug}`,
         "--label",
@@ -152,9 +182,9 @@ export class DeploymentManager {
     }
   }
 
-  async remove(slug: string): Promise<boolean> {
+  async remove(slug: string, scope: DeploymentScope = {}): Promise<boolean> {
     return this.withLock(slug, async () => {
-      const deployment = await this.find(slug);
+      const deployment = await this.find(slug, scope);
       if (!deployment) return false;
       await this.removeContainerAndImage(deployment);
       const state = this.readState();
@@ -164,9 +194,12 @@ export class DeploymentManager {
     });
   }
 
-  async logs(slug: string, tail = 200): Promise<string> {
-    const deployment = await this.find(slug);
+  async logs(slug: string, tail = 200, scope: DeploymentScope = {}): Promise<string> {
+    const deployment = await this.find(slug, scope);
     if (!deployment) throw new Error(`Unknown deployment: ${slug}`);
+    if (deployment.status !== "running") {
+      return [deployment.error, deployment.buildLog].filter(Boolean).join("\n").trim();
+    }
     const result = await runCommand(
       this.config.podman.command,
       ["logs", "--tail", String(Math.max(1, Math.min(tail, 1000))), deployment.container],
@@ -217,14 +250,29 @@ export class DeploymentManager {
     );
   }
 
-  private async find(slug: string): Promise<DeploymentRecord | undefined> {
+  private async find(slug: string, scope: DeploymentScope = {}): Promise<DeploymentRecord | undefined> {
     const deployment = this.readState().deployments.find((entry) => entry.slug === slug);
-    return deployment ? this.reconcile(deployment) : undefined;
+    if (!deployment || !this.matchesScope(deployment, scope)) return undefined;
+    return this.reconcile(deployment);
+  }
+
+  private matchesScope(deployment: DeploymentRecord | undefined, scope: DeploymentScope): boolean {
+    if (!deployment) return true;
+    if (!scope.workspaceId) return true;
+    if (deployment.workspaceId) return deployment.workspaceId === scope.workspaceId;
+    if (!scope.workspaceDirName) return false;
+    return this.projectPathBelongsToWorkspaceDir(deployment.projectPath, scope.workspaceDirName);
   }
 
   private upsert(deployment: DeploymentRecord): void {
     const state = this.readState();
     state.deployments = [this.decorate(deployment), ...state.deployments.filter((entry) => entry.slug !== deployment.slug)];
+    this.writeState(state);
+  }
+
+  private deleteRecord(slug: string): void {
+    const state = this.readState();
+    state.deployments = state.deployments.filter((entry) => entry.slug !== slug);
     this.writeState(state);
   }
 
@@ -298,7 +346,11 @@ export class DeploymentManager {
   private resolveProjectPath(inputPath: string): string {
     const trimmed = inputPath.trim();
     if (!trimmed) throw new Error("Deployment path is required");
-    return isAbsolute(trimmed) ? resolve(trimmed) : resolve(this.config.agentCwd, trimmed);
+    const projectPath = isAbsolute(trimmed) ? resolve(trimmed) : resolve(this.config.agentCwd, trimmed);
+    if (this.pathIsInside(projectPath, this.config.projectsDir) || this.pathIsInsideWorkspaceProjects(projectPath)) {
+      return projectPath;
+    }
+    throw new Error("Deployment path must be inside a workspace projects directory");
   }
 
   private readState(): DeploymentState {
@@ -309,6 +361,24 @@ export class DeploymentManager {
     } catch {
       return { deployments: [] };
     }
+  }
+
+  private projectPathBelongsToWorkspaceDir(projectPath: string, workspaceDirName: string): boolean {
+    const projectsDir = resolve(this.config.workspaceRoot, workspaceDirName, "projects");
+    return this.pathIsInside(projectPath, projectsDir);
+  }
+
+  private pathIsInside(path: string, root: string): boolean {
+    const pathRelative = relative(resolve(root), resolve(path));
+    return pathRelative === "" || (!pathRelative.startsWith("..") && !isAbsolute(pathRelative));
+  }
+
+  private pathIsInsideWorkspaceProjects(projectPath: string): boolean {
+    const projectRelative = relative(resolve(this.config.workspaceRoot), resolve(projectPath));
+    if (!projectRelative || projectRelative.startsWith("..") || isAbsolute(projectRelative)) return false;
+
+    const [, directory] = projectRelative.split(/[\\/]+/);
+    return directory === "projects";
   }
 
   private writeState(state: DeploymentState): void {
@@ -356,10 +426,12 @@ export function deploymentPath(pathname: string): { slug: string; upstreamPath: 
   const rest = pathname.slice(prefix.length);
   const slash = rest.indexOf("/");
   if (slash === -1) {
+    if (!rest) return undefined;
     return { slug: rest, upstreamPath: "/" };
   }
 
   const slug = rest.slice(0, slash);
+  if (!slug) return undefined;
   const upstreamPath = `/${rest.slice(slash + 1)}`;
   return { slug, upstreamPath };
 }
@@ -462,6 +534,7 @@ function cleanResponseHeaders(headers: Record<string, string>): Record<string, s
   for (const [rawName, value] of Object.entries(headers)) {
     const name = rawName.toLowerCase();
     if (HOP_BY_HOP_HEADERS.has(name)) continue;
+    if (name === "set-cookie" || name === "set-cookie2") continue;
     if (name === "content-encoding" || name === "content-length" || name === "transfer-encoding") continue;
     result[name] = value;
   }
