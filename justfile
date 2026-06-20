@@ -52,17 +52,22 @@ deploy-stage:
 
     ssh mom-stage-1 'bash -se' <<'REMOTE'
     set -euo pipefail
+    sudo mkdir -p /srv/agentmom/source
+    sudo chown -R justin:users /srv/agentmom
+    rm -rf /srv/agentmom/source/*
+    REMOTE
 
+    git archive --format=tar HEAD | ssh mom-stage-1 'tar -xf - -C /srv/agentmom/source'
+
+    ssh mom-stage-1 'bash -se' <<'REMOTE'
+    set -euo pipefail
     cd /srv/agentmom
-    git fetch origin master
-    git reset --hard origin/master
-    npm ci
-    npm run build
+    nix build --out-link result /srv/agentmom/source#agentmom
     sudo systemctl restart agentmom
 
     for attempt in $(seq 1 60); do
       health_json="$(curl -fsS http://127.0.0.1:7392/api/health || true)"
-      if [[ "${health_json}" == *'"commit"'* ]]; then
+      if [[ "${health_json}" == *'"ok":true'* ]]; then
         echo "${health_json}"
         break
       fi
@@ -105,17 +110,22 @@ deploy-prod:
 
     ssh mom-1 'bash -se' <<'REMOTE'
     set -euo pipefail
+    sudo mkdir -p /srv/agentmom/source
+    sudo chown -R justin:users /srv/agentmom
+    rm -rf /srv/agentmom/source/*
+    REMOTE
 
+    git archive --format=tar HEAD | ssh mom-1 'tar -xf - -C /srv/agentmom/source'
+
+    ssh mom-1 'bash -se' <<'REMOTE'
+    set -euo pipefail
     cd /srv/agentmom
-    git fetch origin master
-    git reset --hard origin/master
-    npm ci
-    npm run build
+    nix build --out-link result /srv/agentmom/source#agentmom
     sudo systemctl restart agentmom
 
     for attempt in $(seq 1 60); do
       health_json="$(curl -fsS http://127.0.0.1:7392/api/health || true)"
-      if [[ "${health_json}" == *'"commit"'* ]]; then
+      if [[ "${health_json}" == *'"ok":true'* ]]; then
         echo "${health_json}"
         break
       fi
