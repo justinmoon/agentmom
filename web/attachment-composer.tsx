@@ -58,15 +58,20 @@ export function AttachmentComposer({ isRunning, onCancel, onSend }: AttachmentCo
   );
 
   async function submit() {
-    const content = draft.trim();
-    if (!content && attachments.length === 0) return;
+    const submittedDraft = draft;
+    const submittedAttachments = attachments;
+    const content = submittedDraft.trim();
+    if (!content && submittedAttachments.length === 0) return;
+
+    setDraft("");
+    setAttachments([]);
     setIsSending(true);
     setUploadError(undefined);
     try {
-      await onSend(content, attachments);
-      setDraft("");
-      setAttachments([]);
+      await onSend(content, submittedAttachments);
     } catch (error) {
+      setDraft(submittedDraft);
+      setAttachments(submittedAttachments);
       setUploadError(readError(error));
     } finally {
       setIsSending(false);
