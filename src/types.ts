@@ -66,8 +66,22 @@ export type ChatMessage = {
   id: string;
   role: ChatRole;
   content: string;
+  attachments?: MessageAttachment[];
   createdAt: string;
   status?: "running" | "complete" | "error";
+};
+
+export const MAX_MESSAGE_ATTACHMENTS = 8;
+export const MAX_MESSAGE_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+export const MAX_MESSAGE_ATTACHMENT_TOTAL_BYTES = 20 * 1024 * 1024;
+
+export type MessageAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  dataBase64?: string;
+  path?: string;
 };
 
 export type UiEvent = {

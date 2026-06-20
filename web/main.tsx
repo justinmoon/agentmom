@@ -1,6 +1,5 @@
 import {
   AssistantRuntimeProvider,
-  ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
   useExternalStoreRuntime,
@@ -8,7 +7,6 @@ import {
   type ThreadMessageLike
 } from "@assistant-ui/react";
 import {
-  CircleStop,
   GitBranch,
   LogOut,
   MessageCircle,
@@ -17,7 +15,6 @@ import {
   Play,
   RefreshCw,
   RotateCcw,
-  Send,
   SquarePen,
   Terminal,
   UserPlus
@@ -28,10 +25,12 @@ import type {
   AppState,
   ChatMessage,
   MeState,
+  MessageAttachment,
   PreviewService,
   SessionSummary
 } from "../src/types.js";
 import { AdminPage } from "./admin.js";
+import { AttachmentComposer, MessageAttachments } from "./attachment-composer.js";
 import { AuthScreen, LoadingScreen } from "./auth.js";
 import { readError, readJsonResponse, readResponseError } from "./http.js";
 import { RightPanel } from "./right-panel.js";
@@ -140,26 +139,34 @@ function App() {
   }, [isAdminPage, isTelegramSettingsPage, refresh, selectedWorkspace?.id, workspaceUrl]);
 
   const messages = useMemo(() => state.messages.map(toThreadMessage), [state.messages]);
+  const messagesById = useMemo(() => new Map(state.messages.map((message) => [message.id, message])), [state.messages]);
+  const sendMessage = useCallback(
+    async (content: string, attachments: MessageAttachment[] = []) => {
+      if (!content.trim() && attachments.length === 0) return;
+      setError(undefined);
+      const response = await fetch(workspaceUrl("/messages"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, attachments })
+      });
+      if (!response.ok) throw new Error(await readResponseError(response));
+      setState((await response.json()) as AppState);
+    },
+    [workspaceUrl]
+  );
+  const cancelTurn = useCallback(async () => {
+    const response = await fetch(workspaceUrl("/cancel"), { method: "POST" });
+    if (response.ok) setState((await response.json()) as AppState);
+  }, [workspaceUrl]);
   const runtime = useExternalStoreRuntime<ThreadMessageLike>({
     messages,
     isRunning: state.isRunning,
     convertMessage: (message) => message,
     onNew: async (message) => {
       const content = appendMessageText(message);
-      if (!content.trim()) return;
-      setError(undefined);
-      const response = await fetch(workspaceUrl("/messages"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content })
-      });
-      if (!response.ok) throw new Error(await readResponseError(response));
-      setState((await response.json()) as AppState);
+      await sendMessage(content);
     },
-    onCancel: async () => {
-      const response = await fetch(workspaceUrl("/cancel"), { method: "POST" });
-      if (response.ok) setState((await response.json()) as AppState);
-    }
+    onCancel: cancelTurn
   });
 
   async function newSession() {
@@ -382,29 +389,14 @@ function App() {
                         <div className="message-role">{message.role}</div>
                         <div className="message-body">
                           <MessagePrimitive.Content />
+                          <MessageAttachments attachments={messagesById.get(message.id)?.attachments ?? []} />
                         </div>
                       </MessagePrimitive.Root>
                     )}
                   </ThreadPrimitive.Messages>
                 </ThreadPrimitive.Viewport>
 
-                <ComposerPrimitive.Root className="composer">
-                  <ComposerPrimitive.Input
-                    autoFocus
-                    className="composer-input"
-                    placeholder="Ask for a code change, command, or explanation..."
-                    submitMode="enter"
-                  />
-                  {state.isRunning ? (
-                    <ComposerPrimitive.Cancel className="icon-button danger" title="Stop">
-                      <CircleStop size={18} />
-                    </ComposerPrimitive.Cancel>
-                  ) : (
-                    <ComposerPrimitive.Send className="icon-button primary" title="Send">
-                      <Send size={18} />
-                    </ComposerPrimitive.Send>
-                  )}
-                </ComposerPrimitive.Root>
+                <AttachmentComposer isRunning={state.isRunning} onCancel={cancelTurn} onSend={sendMessage} />
               </ThreadPrimitive.Root>
             </section>
 

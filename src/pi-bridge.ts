@@ -27,11 +27,18 @@ import {
   type PreviewRegistration
 } from "./previews.js";
 import type { DeploymentManager } from "./deployments.js";
+import {
+  attachmentImages,
+  messagePromptText,
+  saveMessageAttachments,
+  userMessageAttachments
+} from "./message-attachments.js";
 import { SmolvmRuntime } from "./smolvm.js";
-import type { AppState, ChatMessage, SessionSummary, UiEvent } from "./types.js";
+import type { AppState, ChatMessage, MessageAttachment, SessionSummary, UiEvent } from "./types.js";
 
 type PiMessage = UserMessage | AssistantMessage;
 type StateListener = (state: AppState) => void;
+type SendMessageInput = string | { content: string; attachments?: MessageAttachment[] };
 
 const ACTIVE_TOOLS = ["read", "bash", "edit", "write"];
 
@@ -177,19 +184,24 @@ export class PiBridge {
     return this.snapshot();
   }
 
-  async sendMessage(content: string): Promise<AppState> {
-    const text = content.trim();
-    if (!text) return this.snapshot();
+  async sendMessage(input: SendMessageInput): Promise<AppState> {
+    const text = (typeof input === "string" ? input : input.content).trim();
+    const attachments = typeof input === "string" ? [] : input.attachments ?? [];
+    if (!text && attachments.length === 0) return this.snapshot();
     if (!this.session) await this.init();
     if (!this.session) throw new Error("Pi session was not created");
     if (this.isRunning) throw new Error("A Pi turn is already running");
+
+    const savedAttachments = saveMessageAttachments(this.config, attachments);
+    const images = attachmentImages(savedAttachments);
+    const promptText = messagePromptText(text, savedAttachments);
 
     this.isRunning = true;
     this.lastError = undefined;
     this.emit();
 
     try {
-      await this.session.prompt(text);
+      await this.session.prompt(promptText, images.length > 0 ? { images } : undefined);
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
       this.addEvent("error", "Turn failed", this.lastError, true);
@@ -591,6 +603,7 @@ function toChatMessage(
   fallbackTimestamp?: string
 ): ChatMessage {
   const content = messageToText(message);
+  const attachments = messageAttachments(message);
   const createdAt =
     typeof message.timestamp === "number"
       ? new Date(message.timestamp).toISOString()
@@ -600,6 +613,7 @@ function toChatMessage(
     id: `${idPrefix}-${message.role}-${createdAt}`,
     role: message.role,
     content: content || (message.role === "assistant" ? "[tool call]" : ""),
+    attachments,
     createdAt,
     status: running ? "running" : message.role === "assistant" && message.stopReason === "error" ? "error" : "complete"
   };
@@ -624,9 +638,13 @@ function messageToText(message: PiMessage): string {
 
 function textParts(parts: Array<TextContent | ImageContent>): string {
   return parts
-    .map((part) => (part.type === "text" ? part.text : "[image]"))
+    .map((part) => (part.type === "text" ? part.text : ""))
     .filter(Boolean)
     .join("\n");
+}
+
+function messageAttachments(message: PiMessage): MessageAttachment[] | undefined {
+  return message.role === "user" ? userMessageAttachments(message) : undefined;
 }
 
 function stringifyCompact(value: unknown): string | undefined {

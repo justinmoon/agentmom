@@ -28,7 +28,13 @@ import {
 import { requestHeaders } from "./proxy-utils.js";
 import { ensureWorkspaceProjectPath, workspaceApiPath, workspacePreviewPath } from "./server-paths.js";
 import { TelegramChannel } from "./telegram-channel.js";
-import type { AppState } from "./types.js";
+import {
+  MAX_MESSAGE_ATTACHMENT_BYTES,
+  MAX_MESSAGE_ATTACHMENT_TOTAL_BYTES,
+  MAX_MESSAGE_ATTACHMENTS,
+  type AppState,
+  type MessageAttachment
+} from "./types.js";
 import { WorkspaceRuntimeManager } from "./workspace-runtime.js";
 
 const config = loadConfig();
@@ -381,10 +387,11 @@ async function handleWorkspaceRoute(
 
   if (rest === "/messages" && req.method === "POST") {
     const body = await readJson(req);
-    if (!body?.content || typeof body.content !== "string") {
-      return sendJson(res, { error: "content is required" }, 400);
+    const message = parseMessageRequest(body);
+    if (!message.content.trim() && message.attachments.length === 0) {
+      return sendJson(res, { error: "content or attachment is required" }, 400);
     }
-    return sendJson(res, await bridge.sendMessage(body.content));
+    return sendJson(res, await bridge.sendMessage(message));
   }
 
   if (rest === "/cancel" && req.method === "POST") {
@@ -435,6 +442,66 @@ function requireUser(req: IncomingMessage): CatalogUser {
 
 function authorizeWorkspace(req: IncomingMessage, workspaceId: string): CatalogWorkspace {
   return catalog.authorizeWorkspace(requireUser(req), workspaceId);
+}
+
+function parseMessageRequest(body: any): { content: string; attachments: MessageAttachment[] } {
+  if (body?.content !== undefined && typeof body.content !== "string") {
+    throw Object.assign(new Error("content is invalid"), { status: 400 });
+  }
+  return {
+    content: typeof body?.content === "string" ? body.content : "",
+    attachments: parseMessageAttachments(body?.attachments)
+  };
+}
+
+function parseMessageAttachments(value: unknown): MessageAttachment[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw Object.assign(new Error("attachments are invalid"), { status: 400 });
+  }
+  if (value.length > MAX_MESSAGE_ATTACHMENTS) {
+    throw Object.assign(new Error(`maximum ${MAX_MESSAGE_ATTACHMENTS} attachments allowed`), { status: 400 });
+  }
+
+  let totalBytes = 0;
+  return value.map((raw, index) => {
+    if (!raw || typeof raw !== "object") {
+      throw Object.assign(new Error("attachment is invalid"), { status: 400 });
+    }
+    const attachment = raw as Record<string, unknown>;
+    const name = cleanAttachmentText(attachment.name, `attachment-${index + 1}`);
+    const mimeType = cleanAttachmentText(attachment.mimeType, "application/octet-stream");
+    const dataBase64 = typeof attachment.dataBase64 === "string" ? attachment.dataBase64.trim() : "";
+    if (!dataBase64) {
+      throw Object.assign(new Error(`${name} is missing file data`), { status: 400 });
+    }
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(dataBase64)) {
+      throw Object.assign(new Error(`${name} has invalid file data`), { status: 400 });
+    }
+
+    const bytes = Buffer.from(dataBase64, "base64").byteLength;
+    if (bytes > MAX_MESSAGE_ATTACHMENT_BYTES) {
+      throw Object.assign(new Error(`${name} exceeds the per-file upload limit`), { status: 400 });
+    }
+    totalBytes += bytes;
+    if (totalBytes > MAX_MESSAGE_ATTACHMENT_TOTAL_BYTES) {
+      throw Object.assign(new Error("attachments exceed the total upload limit"), { status: 400 });
+    }
+
+    return {
+      id: cleanAttachmentText(attachment.id, `${Date.now()}-${index + 1}`),
+      name,
+      mimeType,
+      size: bytes,
+      dataBase64
+    };
+  });
+}
+
+function cleanAttachmentText(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, 240) : fallback;
 }
 
 async function shutdown(): Promise<void> {
