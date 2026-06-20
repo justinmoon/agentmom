@@ -147,6 +147,38 @@ try {
     /Deployment path must be inside/
   );
 
+  const telegramCode = catalog.createTelegramLinkCode(normalUser);
+  assert.match(telegramCode.code, /^[a-z0-9]{4}$/);
+  assert.equal(telegramCode.userId, normalUser.id);
+  assert.equal(telegramCode.workspaceId, userWorkspace.id);
+  assert.equal(catalog.currentTelegramLinkCode(normalUser)?.code, telegramCode.code);
+  const telegramLink = catalog.linkTelegramChat({
+    code: telegramCode.code,
+    chatId: "517118295",
+    chatType: "private",
+    title: "Justin",
+    username: "justin",
+    telegramUserId: "517118295",
+    telegramUsername: "justin"
+  });
+  assert.equal(telegramLink.workspace.id, userWorkspace.id);
+  assert.equal(telegramLink.link.userId, normalUser.id);
+  assert.equal(catalog.telegramLinks(normalUser)[0].chatId, "517118295");
+  assert.equal(catalog.telegramWorkspaceForChat("517118295")?.workspace.id, userWorkspace.id);
+  assert.throws(
+    () =>
+      catalog.linkTelegramChat({
+        code: telegramCode.code,
+        chatId: "other",
+        chatType: "private"
+      }),
+    /telegram link code is invalid/
+  );
+  catalog.unlinkTelegram(normalUser, telegramLink.link.id);
+  assert.equal(catalog.telegramWorkspaceForChat("517118295"), undefined);
+  assert.equal(catalog.telegramLinks(normalUser).length, 0);
+  assert.equal(catalog.currentTelegramLinkCode(normalUser), undefined);
+
   const seed = catalog.ensureSeedUser({
     email: "mail@justinmoon.com",
     fullName: "Justin Moon",

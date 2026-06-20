@@ -207,6 +207,44 @@ const server = createServer(async (req, res) => {
       return sendJson(res, { ok: true, workspaces: catalog.me(user).workspaces });
     }
 
+    if (url.pathname === "/api/telegram" && req.method === "GET") {
+      const user = requireUser(req);
+      const code = catalog.currentTelegramLinkCode(user);
+      return sendJson(res, {
+        ok: true,
+        enabled: Boolean(config.telegram.botToken),
+        botUsername: telegram?.username(),
+        linkCode: code
+          ? {
+              code: code.code,
+              command: `/link ${code.code}`,
+              expiresAt: code.expiresAt,
+              botUsername: telegram?.username()
+            }
+          : undefined,
+        links: catalog.telegramLinks(user)
+      });
+    }
+
+    if (url.pathname === "/api/telegram/link-code" && req.method === "POST") {
+      const user = requireUser(req);
+      if (!config.telegram.botToken) throw new Error("telegram bot is not configured");
+      const code = catalog.createTelegramLinkCode(user);
+      return sendJson(res, {
+        ok: true,
+        code: code.code,
+        command: `/link ${code.code}`,
+        expiresAt: code.expiresAt,
+        botUsername: telegram?.username()
+      });
+    }
+
+    const telegramUnlink = /^\/api\/telegram\/links\/([^/]+)$/.exec(url.pathname);
+    if (telegramUnlink && req.method === "DELETE") {
+      const user = requireUser(req);
+      return sendJson(res, { ok: true, link: catalog.unlinkTelegram(user, decodeURIComponent(telegramUnlink[1])) });
+    }
+
     const workspaceRoute = workspaceApiPath(url.pathname);
     if (workspaceRoute) {
       const workspace = authorizeWorkspace(req, workspaceRoute.workspaceId);
@@ -552,25 +590,8 @@ function startTelegramChannel(): void {
   const token = config.telegram.botToken?.trim();
   if (!token) return;
 
-  const workspace = resolveTelegramWorkspace();
-  if (!workspace) return;
-
-  telegram = new TelegramChannel({ token, workspace, runtimes });
+  telegram = new TelegramChannel({ token, catalog, runtimes });
   telegram.start();
-}
-
-function resolveTelegramWorkspace(): CatalogWorkspace | undefined {
-  const configuredWorkspaceId = config.telegram.workspaceId?.trim();
-  if (configuredWorkspaceId) {
-    const workspace = catalog.read().workspaces.find((candidate) => candidate.id === configuredWorkspaceId);
-    if (!workspace) throw new Error(`AGENTGRANNY_TELEGRAM_WORKSPACE_ID not found: ${configuredWorkspaceId}`);
-    return workspace;
-  }
-
-  if (!config.authEnabled) return catalog.ensureDevUser().workspace;
-
-  console.warn("AGENTGRANNY_TELEGRAM_BOT_TOKEN is set, but AGENTGRANNY_TELEGRAM_WORKSPACE_ID is not; Telegram disabled");
-  return undefined;
 }
 
 async function startServer(): Promise<void> {

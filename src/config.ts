@@ -26,7 +26,6 @@ export type AppConfig = {
   openRouterApiKey?: string;
   telegram: {
     botToken?: string;
-    workspaceId?: string;
   };
   rootDir: string;
   podman: {
@@ -119,9 +118,6 @@ export function loadConfig(): AppConfig {
   const telegramBotToken =
     process.env.AGENTGRANNY_TELEGRAM_BOT_TOKEN ??
     readEnvFileValue(openRouterEnvFile, "AGENTGRANNY_TELEGRAM_BOT_TOKEN");
-  const telegramWorkspaceId =
-    process.env.AGENTGRANNY_TELEGRAM_WORKSPACE_ID ??
-    readEnvFileValue(openRouterEnvFile, "AGENTGRANNY_TELEGRAM_WORKSPACE_ID");
 
   if (openRouterApiKey && !process.env.OPENROUTER_API_KEY) {
     process.env.OPENROUTER_API_KEY = openRouterApiKey;
@@ -149,8 +145,7 @@ export function loadConfig(): AppConfig {
     openRouterEnvFile,
     openRouterApiKey,
     telegram: {
-      botToken: telegramBotToken,
-      workspaceId: telegramWorkspaceId
+      botToken: telegramBotToken
     },
     rootDir,
     podman: {

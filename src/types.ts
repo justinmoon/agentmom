@@ -1,5 +1,6 @@
 export type ChatRole = "user" | "assistant";
 export type UserRole = "admin" | "user";
+export type TelegramChatType = "private" | "group" | "supergroup" | "channel";
 
 export type PublicUser = {
   id: string;
@@ -36,6 +37,21 @@ export type PublicInvite = {
 export type PublicAdminUser = PublicUser & {
   workspace?: PublicWorkspace;
   invite?: PublicInvite;
+};
+
+export type PublicTelegramLink = {
+  id: string;
+  userId: string;
+  workspaceId: string;
+  chatId: string;
+  chatType: TelegramChatType;
+  title?: string;
+  username?: string;
+  telegramUserId?: string;
+  telegramUsername?: string;
+  active: boolean;
+  createdAt: number;
+  lastSeenAt?: number;
 };
 
 export type MeState = {

@@ -458,7 +458,8 @@ code {
   font-size: 0.84rem;
 }
 
-.admin-shell {
+.admin-shell,
+.settings-shell {
   min-height: 100vh;
   background: #f6f6f3;
   padding: 20px;
@@ -507,6 +508,111 @@ code {
   display: grid;
   gap: 16px;
   padding: 16px;
+}
+
+.settings-panel {
+  max-width: 1040px;
+  margin: 0 auto;
+  display: grid;
+  gap: 16px;
+}
+
+.telegram-setup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.settings-card {
+  min-width: 0;
+  border: 1px solid #d9ddd5;
+  border-radius: 8px;
+  background: #fff;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.settings-card-header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-card-header div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.settings-card-header strong,
+.settings-card-header small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-card-header small {
+  color: #6d746e;
+  font-size: 0.82rem;
+}
+
+.settings-primary-button,
+.telegram-command-actions button,
+.telegram-command-actions a {
+  min-height: 38px;
+  border: 1px solid #d6dbd1;
+  border-radius: 7px;
+  background: #fff;
+  color: #28302c;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.settings-primary-button:hover:not(:disabled),
+.telegram-command-actions button:hover,
+.telegram-command-actions a:hover {
+  border-color: #88988d;
+  background: #f3f7f1;
+}
+
+.settings-primary-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.telegram-command {
+  font-size: 0.95rem;
+}
+
+.telegram-command-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-list-block {
+  border: 1px solid #d9ddd5;
+  border-radius: 8px;
+  background: #fff;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.settings-list-block h2 {
+  margin: 0;
+  color: #687069;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .admin-tabs {
@@ -587,6 +693,15 @@ code {
 .user-admin-row {
   grid-template-columns: minmax(180px, 1.2fr) minmax(160px, 1fr) minmax(190px, 1fr) 110px;
   align-items: center;
+}
+
+.telegram-link-row {
+  grid-template-columns: minmax(180px, 1fr) minmax(130px, 0.8fr) minmax(180px, 1fr) auto;
+  align-items: center;
+}
+
+.telegram-link-row.inactive {
+  opacity: 0.62;
 }
 
 .admin-row div {

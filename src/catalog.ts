@@ -1,16 +1,22 @@
-import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AppConfig } from "./config.js";
 import type {
   PublicAdminUser,
   PublicInvite,
+  PublicTelegramLink,
   PublicUser,
   PublicWorkspace,
+  TelegramChatType,
   UserRole
 } from "./types.js";
 
 export const SESSION_COOKIE = "granny_session";
+const TELEGRAM_LINK_CODE_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
+const TELEGRAM_LINK_CODE_LENGTH = 4;
+const TELEGRAM_LINK_CODE_SPACE = TELEGRAM_LINK_CODE_ALPHABET.length ** TELEGRAM_LINK_CODE_LENGTH;
+const TELEGRAM_LINK_CODE_PATTERN = /^[a-z0-9]{4}$/;
 
 export type CatalogUser = {
   id: string;
@@ -55,12 +61,38 @@ export type CatalogWorkspace = {
   updatedAt: number;
 };
 
+export type CatalogTelegramLink = {
+  id: string;
+  userId: string;
+  workspaceId: string;
+  chatId: string;
+  chatType: TelegramChatType;
+  title?: string;
+  username?: string;
+  telegramUserId?: string;
+  telegramUsername?: string;
+  active: boolean;
+  createdAt: number;
+  lastSeenAt?: number;
+};
+
+export type CatalogTelegramLinkCode = {
+  code: string;
+  userId: string;
+  workspaceId: string;
+  createdAt: number;
+  expiresAt: number;
+  usedAt?: number;
+};
+
 export type CatalogData = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   users: CatalogUser[];
   sessions: CatalogSession[];
   invites: CatalogInvite[];
   workspaces: CatalogWorkspace[];
+  telegramLinks: CatalogTelegramLink[];
+  telegramLinkCodes: CatalogTelegramLinkCode[];
 };
 
 export type SignupInput = {
@@ -93,12 +125,62 @@ export type AuthResult = {
   workspace: CatalogWorkspace;
 };
 
+export type TelegramLinkChatInput = {
+  code: string;
+  chatId: string;
+  chatType: TelegramChatType;
+  title?: string;
+  username?: string;
+  telegramUserId?: string;
+  telegramUsername?: string;
+};
+
 function now(): number {
   return Math.floor(Date.now() / 1000);
 }
 
 function base64url(bytes: number): string {
   return randomBytes(bytes).toString("base64url");
+}
+
+function randomTelegramLinkCode(): string {
+  let code = "";
+  for (let i = 0; i < TELEGRAM_LINK_CODE_LENGTH; i += 1) {
+    code += TELEGRAM_LINK_CODE_ALPHABET[randomInt(TELEGRAM_LINK_CODE_ALPHABET.length)];
+  }
+  return code;
+}
+
+function telegramLinkCodeAt(index: number): string {
+  let remaining = index;
+  let code = "";
+  for (let i = 0; i < TELEGRAM_LINK_CODE_LENGTH; i += 1) {
+    code = TELEGRAM_LINK_CODE_ALPHABET[remaining % TELEGRAM_LINK_CODE_ALPHABET.length] + code;
+    remaining = Math.floor(remaining / TELEGRAM_LINK_CODE_ALPHABET.length);
+  }
+  return code;
+}
+
+function unusedTelegramLinkCode(activeCodes: Set<string>): string {
+  if (activeCodes.size >= TELEGRAM_LINK_CODE_SPACE) {
+    throw new Error("telegram link code space exhausted");
+  }
+
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const code = randomTelegramLinkCode();
+    if (!activeCodes.has(code)) return code;
+  }
+
+  for (let index = 0; index < TELEGRAM_LINK_CODE_SPACE; index += 1) {
+    const code = telegramLinkCodeAt(index);
+    if (!activeCodes.has(code)) return code;
+  }
+
+  throw new Error("telegram link code space exhausted");
+}
+
+function normalizeTelegramLinkCode(code: string): string {
+  return code.trim().toLowerCase();
 }
 
 function sha256(value: string): string {
@@ -163,11 +245,13 @@ function parseCookie(header: string | undefined, name: string): string | null {
 
 function emptyCatalog(): CatalogData {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     users: [],
     sessions: [],
     invites: [],
-    workspaces: []
+    workspaces: [],
+    telegramLinks: [],
+    telegramLinkCodes: []
   };
 }
 
@@ -219,6 +303,23 @@ function publicAdminUser(user: CatalogUser, data: CatalogData): PublicAdminUser 
   };
 }
 
+function publicTelegramLink(link: CatalogTelegramLink): PublicTelegramLink {
+  return {
+    id: link.id,
+    userId: link.userId,
+    workspaceId: link.workspaceId,
+    chatId: link.chatId,
+    chatType: link.chatType,
+    title: link.title,
+    username: link.username,
+    telegramUserId: link.telegramUserId,
+    telegramUsername: link.telegramUsername,
+    active: link.active,
+    createdAt: link.createdAt,
+    lastSeenAt: link.lastSeenAt
+  };
+}
+
 export class CatalogStore {
   private readonly path: string;
 
@@ -229,7 +330,11 @@ export class CatalogStore {
   read(): CatalogData {
     mkdirSync(this.config.stateDir, { recursive: true });
     if (!existsSync(this.path)) return emptyCatalog();
-    return JSON.parse(readFileSync(this.path, "utf8")) as CatalogData;
+    const data = JSON.parse(readFileSync(this.path, "utf8")) as CatalogData;
+    if (data.schemaVersion !== 3) {
+      throw new Error(`catalog schema version ${data.schemaVersion} is not supported; reset ${this.path}`);
+    }
+    return data;
   }
 
   write(data: CatalogData): void {
@@ -442,6 +547,107 @@ export class CatalogStore {
     if (user.role !== "admin") throw new Error("admin required");
     const data = this.read();
     return data.users.map((candidate) => publicAdminUser(candidate, data));
+  }
+
+  createTelegramLinkCode(user: CatalogUser): CatalogTelegramLinkCode {
+    const workspace = this.workspaceForUser(user);
+    const data = this.read();
+    const timestamp = now();
+    data.telegramLinkCodes = data.telegramLinkCodes.filter((candidate) => {
+      if (!TELEGRAM_LINK_CODE_PATTERN.test(candidate.code)) return false;
+      if (candidate.usedAt || candidate.expiresAt <= timestamp) return false;
+      return candidate.userId !== user.id;
+    });
+    const activeCodes = new Set(data.telegramLinkCodes.map((candidate) => candidate.code));
+    const code: CatalogTelegramLinkCode = {
+      code: unusedTelegramLinkCode(activeCodes),
+      userId: user.id,
+      workspaceId: workspace.id,
+      createdAt: timestamp,
+      expiresAt: timestamp + 15 * 60
+    };
+    data.telegramLinkCodes.push(code);
+    this.write(data);
+    return code;
+  }
+
+  currentTelegramLinkCode(user: CatalogUser): CatalogTelegramLinkCode | undefined {
+    const timestamp = now();
+    return this.read()
+      .telegramLinkCodes.filter(
+        (code) =>
+          code.userId === user.id &&
+          TELEGRAM_LINK_CODE_PATTERN.test(code.code) &&
+          !code.usedAt &&
+          code.expiresAt > timestamp
+      )
+      .sort((left, right) => right.createdAt - left.createdAt)[0];
+  }
+
+  telegramLinks(user: CatalogUser): PublicTelegramLink[] {
+    return this.read()
+      .telegramLinks.filter((link) => link.userId === user.id && link.active)
+      .map(publicTelegramLink);
+  }
+
+  unlinkTelegram(user: CatalogUser, linkId: string): PublicTelegramLink {
+    const data = this.read();
+    const link = data.telegramLinks.find((candidate) => candidate.id === linkId);
+    if (!link || link.userId !== user.id) throw new Error("telegram link not found");
+    link.active = false;
+    this.write(data);
+    return publicTelegramLink(link);
+  }
+
+  linkTelegramChat(input: TelegramLinkChatInput): { link: PublicTelegramLink; workspace: CatalogWorkspace } {
+    const data = this.read();
+    const timestamp = now();
+    const inputCode = normalizeTelegramLinkCode(input.code);
+    const code = data.telegramLinkCodes.find(
+      (candidate) => TELEGRAM_LINK_CODE_PATTERN.test(candidate.code) && candidate.code === inputCode
+    );
+    if (!code || code.usedAt || code.expiresAt <= timestamp) throw new Error("telegram link code is invalid");
+
+    const user = data.users.find((candidate) => candidate.id === code.userId);
+    if (!user) throw new Error("telegram link user not found");
+    const workspace = data.workspaces.find((candidate) => candidate.id === code.workspaceId);
+    if (!workspace) throw new Error("telegram link workspace not found");
+
+    for (const link of data.telegramLinks) {
+      if (link.chatId === input.chatId && link.active) {
+        link.active = false;
+      }
+    }
+
+    const link: CatalogTelegramLink = {
+      id: randomUUID(),
+      userId: code.userId,
+      workspaceId: code.workspaceId,
+      chatId: input.chatId,
+      chatType: input.chatType,
+      title: input.title,
+      username: input.username,
+      telegramUserId: input.telegramUserId,
+      telegramUsername: input.telegramUsername,
+      active: true,
+      createdAt: timestamp,
+      lastSeenAt: timestamp
+    };
+    code.usedAt = timestamp;
+    data.telegramLinks.push(link);
+    this.write(data);
+    return { link: publicTelegramLink(link), workspace };
+  }
+
+  telegramWorkspaceForChat(chatId: string): { link: CatalogTelegramLink; workspace: CatalogWorkspace } | undefined {
+    const data = this.read();
+    const link = data.telegramLinks.find((candidate) => candidate.chatId === chatId && candidate.active);
+    if (!link) return undefined;
+    const workspace = data.workspaces.find((candidate) => candidate.id === link.workspaceId);
+    if (!workspace) throw new Error("telegram workspace not found");
+    link.lastSeenAt = now();
+    this.write(data);
+    return { link, workspace };
   }
 
   visibleWorkspaces(user: CatalogUser): CatalogWorkspace[] {

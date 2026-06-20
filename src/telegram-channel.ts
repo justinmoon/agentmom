@@ -1,14 +1,15 @@
 import { Bot, GrammyError, HttpError } from "grammy";
 import type { Message } from "grammy/types";
-import type { CatalogWorkspace } from "./catalog.js";
+import { CatalogStore } from "./catalog.js";
 import type { AppState, ChatMessage } from "./types.js";
+import type { TelegramChatType } from "./types.js";
 import type { WorkspaceRuntimeManager } from "./workspace-runtime.js";
 
 type TelegramSource = "message" | "channel_post";
 
 export type TelegramChannelOptions = {
   token: string;
-  workspace: CatalogWorkspace;
+  catalog: CatalogStore;
   runtimes: WorkspaceRuntimeManager;
 };
 
@@ -20,6 +21,7 @@ export class TelegramChannel {
   private startTask: Promise<void> | undefined;
   private restartTimer: ReturnType<typeof setTimeout> | undefined;
   private stopRequested = false;
+  private botUsername: string | undefined;
 
   constructor(private readonly options: TelegramChannelOptions) {
     this.bot = new Bot(options.token);
@@ -48,6 +50,7 @@ export class TelegramChannel {
         drop_pending_updates: true,
         onStart: (info) => {
           this.botId = info.id;
+          this.botUsername = info.username;
           console.log(`telegram channel listening as @${info.username ?? info.first_name}`);
         }
       })
@@ -79,6 +82,10 @@ export class TelegramChannel {
     this.startTask = undefined;
   }
 
+  username(): string | undefined {
+    return this.botUsername;
+  }
+
   private async handleTelegramMessage(message: Message, source: TelegramSource): Promise<void> {
     const text = telegramText(message);
     if (!text) return;
@@ -92,10 +99,26 @@ export class TelegramChannel {
       `telegram ${source} received chat=${message.chat.id} message=${message.message_id} chars=${text.length}`
     );
 
-    const { bridge } = await this.options.runtimes.get(this.options.workspace);
-    const before = await bridge.snapshot();
-
     try {
+      const linkCode = parseTelegramLinkCode(text);
+      if (linkCode) {
+        await this.linkChat(message, linkCode, source);
+        return;
+      }
+
+      const route = this.options.catalog.telegramWorkspaceForChat(String(message.chat.id));
+      if (!route) {
+        await this.sendText(
+          message.chat.id,
+          "This Telegram chat is not linked yet. Open Agent Granny settings, create a Telegram link code, then send /link <code> here.",
+          source === "message" ? message.message_id : undefined
+        );
+        return;
+      }
+
+      const { bridge } = await this.options.runtimes.get(route.workspace);
+      const before = await bridge.snapshot();
+
       if (source === "message") {
         await this.bot.api.sendChatAction(message.chat.id, "typing").catch(() => undefined);
       }
@@ -109,6 +132,25 @@ export class TelegramChannel {
       console.error(`telegram message failed: ${detail}`);
       await this.sendText(message.chat.id, `Agent Granny error: ${detail}`, source === "message" ? message.message_id : undefined);
     }
+  }
+
+  private async linkChat(message: Message, code: string, source: TelegramSource): Promise<void> {
+    const result = this.options.catalog.linkTelegramChat({
+      code,
+      chatId: String(message.chat.id),
+      chatType: telegramChatType(message),
+      title: telegramChatTitle(message),
+      username: telegramUsername(message.chat),
+      telegramUserId: message.from?.id != null ? String(message.from.id) : undefined,
+      telegramUsername: message.from?.username
+    });
+
+    await this.sendText(
+      message.chat.id,
+      `Linked this Telegram chat to ${result.workspace.displayName}.`,
+      source === "message" ? message.message_id : undefined
+    );
+    console.log(`telegram linked chat=${message.chat.id} workspace=${result.workspace.id}`);
   }
 
   private async sendText(chatId: number | string, text: string, replyToMessageId?: number): Promise<void> {
@@ -187,6 +229,30 @@ export function chunkTelegramText(text: string, maxChars = 3900): string[] {
 
 function telegramText(message: Message): string {
   return "text" in message && typeof message.text === "string" ? message.text.trim() : "";
+}
+
+function parseTelegramLinkCode(text: string): string | undefined {
+  const match = /^\/(?:link|start)(?:@[A-Za-z0-9_]+)?\s+(\S+)/i.exec(text.trim());
+  return match?.[1];
+}
+
+function telegramChatType(message: Message): TelegramChatType {
+  const type = message.chat.type;
+  return type === "group" || type === "supergroup" || type === "channel" ? type : "private";
+}
+
+function telegramChatTitle(message: Message): string | undefined {
+  const chat = message.chat as {
+    title?: string;
+    first_name?: string;
+    last_name?: string;
+    username?: string;
+  };
+  return chat.title ?? ([chat.first_name, chat.last_name].filter(Boolean).join(" ") || chat.username);
+}
+
+function telegramUsername(chat: Message["chat"]): string | undefined {
+  return "username" in chat && typeof chat.username === "string" ? chat.username : undefined;
 }
 
 function telegramMessageKey(chatId: number | string, messageId: number): string {
