@@ -13,10 +13,11 @@ import type {
 } from "./types.js";
 
 export const SESSION_COOKIE = "agentmom_session";
-const TELEGRAM_LINK_CODE_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
-const TELEGRAM_LINK_CODE_LENGTH = 4;
-const TELEGRAM_LINK_CODE_SPACE = TELEGRAM_LINK_CODE_ALPHABET.length ** TELEGRAM_LINK_CODE_LENGTH;
-const TELEGRAM_LINK_CODE_PATTERN = /^[a-z0-9]{4}$/;
+const SHORT_CODE_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
+const SHORT_CODE_LENGTH = 4;
+const SHORT_CODE_SPACE = SHORT_CODE_ALPHABET.length ** SHORT_CODE_LENGTH;
+const SHORT_CODE_PATTERN = /^[a-z0-9]{4}$/;
+const TELEGRAM_LINK_CODE_PATTERN = SHORT_CODE_PATTERN;
 
 export type CatalogUser = {
   id: string;
@@ -143,44 +144,53 @@ function base64url(bytes: number): string {
   return randomBytes(bytes).toString("base64url");
 }
 
-function randomTelegramLinkCode(): string {
+function randomShortCode(): string {
   let code = "";
-  for (let i = 0; i < TELEGRAM_LINK_CODE_LENGTH; i += 1) {
-    code += TELEGRAM_LINK_CODE_ALPHABET[randomInt(TELEGRAM_LINK_CODE_ALPHABET.length)];
+  for (let i = 0; i < SHORT_CODE_LENGTH; i += 1) {
+    code += SHORT_CODE_ALPHABET[randomInt(SHORT_CODE_ALPHABET.length)];
   }
   return code;
 }
 
-function telegramLinkCodeAt(index: number): string {
+function shortCodeAt(index: number): string {
   let remaining = index;
   let code = "";
-  for (let i = 0; i < TELEGRAM_LINK_CODE_LENGTH; i += 1) {
-    code = TELEGRAM_LINK_CODE_ALPHABET[remaining % TELEGRAM_LINK_CODE_ALPHABET.length] + code;
-    remaining = Math.floor(remaining / TELEGRAM_LINK_CODE_ALPHABET.length);
+  for (let i = 0; i < SHORT_CODE_LENGTH; i += 1) {
+    code = SHORT_CODE_ALPHABET[remaining % SHORT_CODE_ALPHABET.length] + code;
+    remaining = Math.floor(remaining / SHORT_CODE_ALPHABET.length);
   }
   return code;
 }
 
-function unusedTelegramLinkCode(activeCodes: Set<string>): string {
-  if (activeCodes.size >= TELEGRAM_LINK_CODE_SPACE) {
-    throw new Error("telegram link code space exhausted");
+function unusedShortCode(usedCodes: Set<string>, label: string): string {
+  if (usedCodes.size >= SHORT_CODE_SPACE) {
+    throw new Error(`${label} code space exhausted`);
   }
 
   for (let attempt = 0; attempt < 64; attempt += 1) {
-    const code = randomTelegramLinkCode();
-    if (!activeCodes.has(code)) return code;
+    const code = randomShortCode();
+    if (!usedCodes.has(code)) return code;
   }
 
-  for (let index = 0; index < TELEGRAM_LINK_CODE_SPACE; index += 1) {
-    const code = telegramLinkCodeAt(index);
-    if (!activeCodes.has(code)) return code;
+  for (let index = 0; index < SHORT_CODE_SPACE; index += 1) {
+    const code = shortCodeAt(index);
+    if (!usedCodes.has(code)) return code;
   }
 
-  throw new Error("telegram link code space exhausted");
+  throw new Error(`${label} code space exhausted`);
+}
+
+function unusedTelegramLinkCode(activeCodes: Set<string>): string {
+  return unusedShortCode(activeCodes, "telegram link");
 }
 
 function normalizeTelegramLinkCode(code: string): string {
   return code.trim().toLowerCase();
+}
+
+function normalizeInviteCode(code: string): string {
+  const trimmed = code.trim();
+  return SHORT_CODE_PATTERN.test(trimmed.toLowerCase()) ? trimmed.toLowerCase() : trimmed;
 }
 
 function sha256(value: string): string {
@@ -420,7 +430,7 @@ export class CatalogStore {
     let role: UserRole = "admin";
     let inviteId: string | undefined;
     if (!firstUser) {
-      const code = input.inviteCode?.trim();
+      const code = input.inviteCode ? normalizeInviteCode(input.inviteCode) : "";
       if (!code) throw new Error("invite code is required");
       const invite = data.invites.find((candidate) => candidate.code === code);
       if (!invite || !invite.active) throw new Error("invite code is invalid");
@@ -510,7 +520,8 @@ export class CatalogStore {
   createInvite(user: CatalogUser, input: InviteInput): { invite: PublicInvite; code: string } {
     if (user.role !== "admin") throw new Error("admin required");
     const role: UserRole = input.role === "admin" ? "admin" : "user";
-    const code = `mom-${base64url(12)}`;
+    const data = this.read();
+    const code = unusedShortCode(new Set(data.invites.map((invite) => invite.code)), "invite");
     const invite: CatalogInvite = {
       id: randomUUID(),
       code,
@@ -521,7 +532,6 @@ export class CatalogStore {
       createdByUserId: user.id,
       createdAt: now()
     };
-    const data = this.read();
     data.invites.push(invite);
     this.write(data);
     return { invite: publicInvite(invite), code };

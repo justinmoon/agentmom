@@ -40,6 +40,7 @@ try {
 
   const adminUser = catalog.currentUser(`agentmom_session=${admin.token}`)!;
   const invite = catalog.createInvite(adminUser, { label: "team", role: "user" });
+  assert.match(invite.code, /^[a-z0-9]{4}$/);
   assert.equal(catalog.read().invites[0].code, invite.code);
   assert.equal(catalog.invites(adminUser)[0].code, invite.code);
 
@@ -47,7 +48,7 @@ try {
     email: "user1@example.com",
     fullName: "User One",
     password: "password123",
-    inviteCode: invite.code
+    inviteCode: invite.code.toUpperCase()
   });
   const userTwo = catalog.signup({
     email: "user2@example.com",
@@ -59,6 +60,26 @@ try {
   assert.equal(userTwo.user.inviteId, userOne.user.inviteId);
   assert.equal(catalog.invites(adminUser)[0].usedCount, 2);
   assert.equal(catalog.users(adminUser).some((user) => user.email === "user1@example.com" && user.invite?.code === invite.code), true);
+
+  const legacyData = catalog.read();
+  legacyData.invites.push({
+    id: "legacy-invite",
+    code: "mom-AbCd1234",
+    label: "legacy",
+    role: "user",
+    usedCount: 0,
+    active: true,
+    createdByUserId: adminUser.id,
+    createdAt: Math.floor(Date.now() / 1000)
+  });
+  catalog.write(legacyData);
+  const legacyUser = catalog.signup({
+    email: "legacy@example.com",
+    fullName: "Legacy User",
+    password: "password123",
+    inviteCode: "mom-AbCd1234"
+  });
+  assert.equal(legacyUser.user.role, "user");
 
   catalog.disableInvite(adminUser, invite.invite.id);
   assert.throws(
