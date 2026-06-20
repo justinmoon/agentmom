@@ -13,6 +13,11 @@ let
   proxyUrl = "http://${proxyAddress}";
   startScript = pkgs.writeShellScript "agentmom-start" ''
     set -eu
+    runtime_dir="/run/user/$(${pkgs.coreutils}/bin/id -u)"
+    if [ ! -d "$runtime_dir" ]; then
+      runtime_dir="/run/${cfg.serviceName}"
+    fi
+    export XDG_RUNTIME_DIR="$runtime_dir"
     ${lib.optionalString (cfg.openRouterKeyFile != null) ''
       export AGENTMOM_OPENROUTER_ENV_FILE="$CREDENTIALS_DIRECTORY/openrouter"
     ''}
@@ -235,7 +240,6 @@ in
             NODE_ENV = "production";
             XDG_CACHE_HOME = "${cfg.stateDir}/xdg-cache";
             XDG_DATA_HOME = "${cfg.stateDir}/xdg-data";
-            XDG_RUNTIME_DIR = "/run/user/%U";
           }
           // lib.optionalAttrs (cfg.deploymentBaseDomain != null) {
             AGENTMOM_DEPLOYMENT_BASE_DOMAIN = cfg.deploymentBaseDomain;
@@ -248,6 +252,8 @@ in
             KillMode = "process";
             Restart = "on-failure";
             RestartSec = 3;
+            RuntimeDirectory = cfg.serviceName;
+            RuntimeDirectoryMode = "0700";
             Type = "simple";
             User = cfg.user;
             WorkingDirectory = cfg.workspaceDir;

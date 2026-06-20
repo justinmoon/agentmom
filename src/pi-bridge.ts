@@ -138,6 +138,7 @@ export class PiBridge {
           "## Agent Mom Deployments",
           "- When the user asks to deploy or publish, do it yourself with `mom deploy`.",
           "- The project must have a Dockerfile. Make it listen on `$PORT`.",
+          "- In Dockerfiles, `EXPOSE` must be a literal port like `EXPOSE 3000`; do not write `EXPOSE $PORT`.",
           "- All deploy args are required: `mom deploy --cwd <absolute-project-path> --port <port> --slug <slug>`.",
           "- If you are in the project directory, use `mom deploy --cwd \"$PWD\" --port <port> --slug <slug>`.",
           "- Deployment service errors are returned in command output; fix the Dockerfile/app and rerun deploy."
