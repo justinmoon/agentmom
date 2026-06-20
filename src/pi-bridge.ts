@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { getModel } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Model, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import {
@@ -461,7 +461,9 @@ export class PiBridge {
       const deployment = await this.deployments.publish({
         path: projectPath,
         slug: registration.slug,
-        port: registration.port
+        port: registration.port,
+        workspaceId: this.config.workspaceId,
+        workspaceDirName: this.config.workspaceDirName
       });
       const url = deployment.url ?? deployment.urlPath;
       this.addEvent("deployment", "Deployment published", `${deployment.slug} ${url}`);
@@ -470,6 +472,7 @@ export class PiBridge {
       const message = error instanceof Error ? error.message : String(error);
       this.addEvent("deployment", "Deployment failed", truncate(message, 4000), true);
       forward(`Deployment failed: ${message}\n`);
+      throw error;
     } finally {
       this.emit();
     }
@@ -483,11 +486,23 @@ export class PiBridge {
       const guestWorkspace = this.config.smolvm.guestWorkspace.replace(/\/+$/, "");
       if (trimmed === guestWorkspace || trimmed.startsWith(`${guestWorkspace}/`)) {
         const relativePath = trimmed.slice(guestWorkspace.length).replace(/^\/+/, "");
-        return resolve(this.config.projectsDir, relativePath);
+        return this.ensureProjectPath(resolve(this.config.projectsDir, relativePath));
       }
     }
 
-    return resolve(trimmed);
+    if (!isAbsolute(trimmed)) {
+      throw new Error("Deployment path must be absolute");
+    }
+    return this.ensureProjectPath(resolve(trimmed));
+  }
+
+  private ensureProjectPath(path: string): string {
+    const projectsDir = resolve(this.config.projectsDir);
+    const projectRelative = relative(projectsDir, path);
+    if (projectRelative === "" || (!projectRelative.startsWith("..") && !isAbsolute(projectRelative))) {
+      return path;
+    }
+    throw new Error(`Deployment path must be inside ${projectsDir}`);
   }
 
   private async fetchPreviewFromGuest(port: number, request: PreviewFetchRequest): Promise<PreviewFetchResponse> {

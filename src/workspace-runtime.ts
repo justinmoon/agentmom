@@ -58,6 +58,8 @@ export function workspaceConfig(base: AppConfig, workspace: CatalogWorkspace): A
   const workspaceStateDir = resolve(base.stateDir, "workspaces", workspace.id);
   return {
     ...base,
+    workspaceId: workspace.id,
+    workspaceDirName: workspace.workspaceDirName,
     workspace: workspacePath,
     projectsDir: resolve(workspacePath, "projects"),
     agentCwd: resolve(workspacePath, "projects"),
