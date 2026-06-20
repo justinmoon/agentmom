@@ -6,6 +6,7 @@ result
 .agentgranny2-auth/
 .smoke-workspace/
 .env
+.env.prod
 npm-debug.log*
 
 # Local dogfood outputs from trying the agent in this workspace.
