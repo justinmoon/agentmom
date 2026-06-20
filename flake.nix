@@ -46,7 +46,10 @@
         };
       });
 
-      nixosModules.default = self.nixosModules.agentmom;
-      nixosModules.agentmom = import ./nix/module.nix { inherit self; };
+      nixosModules.default = self.nixosModules.agentmomWeb;
+      nixosModules.agentmom = self.nixosModules.agentmomWeb;
+      nixosModules.agentmomWeb = import ./nix/module.nix { inherit self; };
+      nixosModules.stageHost = import ./nix/hosts/stage.nix { inherit self; };
+      nixosModules.prodHost = import ./nix/hosts/prod.nix { inherit self; };
     };
 }

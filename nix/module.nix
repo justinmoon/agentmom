@@ -7,7 +7,17 @@
 }:
 
 let
-  cfg = config.services.agentmom;
+  cfg = config.services.agentmomWeb;
+  proxyHost = if cfg.host == "0.0.0.0" then "127.0.0.1" else cfg.host;
+  proxyAddress = "${proxyHost}:${toString cfg.port}";
+  proxyUrl = "http://${proxyAddress}";
+  startScript = pkgs.writeShellScript "agentmom-start" ''
+    set -eu
+    ${lib.optionalString (cfg.openRouterKeyFile != null) ''
+      export AGENTMOM_OPENROUTER_ENV_FILE="$CREDENTIALS_DIRECTORY/openrouter"
+    ''}
+    exec ${lib.getExe cfg.package}
+  '';
   uidmapWrappers = pkgs.runCommand "agentmom-uidmap-wrappers" { } ''
     mkdir -p "$out/bin"
     ln -s /run/wrappers/bin/newuidmap "$out/bin/newuidmap"
@@ -15,7 +25,7 @@ let
   '';
 in
 {
-  options.services.agentmom = {
+  options.services.agentmomWeb = {
     enable = lib.mkEnableOption "Agent Mom web app";
 
     package = lib.mkOption {
@@ -24,15 +34,21 @@ in
       description = "Agent Mom package to run.";
     };
 
+    serviceName = lib.mkOption {
+      type = lib.types.str;
+      default = "agentmom-web";
+      description = "systemd unit name for the web service.";
+    };
+
     user = lib.mkOption {
       type = lib.types.str;
-      default = "agentmom";
+      default = "agentmom-web";
       description = "User that runs Agent Mom.";
     };
 
     group = lib.mkOption {
       type = lib.types.str;
-      default = "agentmom";
+      default = "agentmom-web";
       description = "Group that runs Agent Mom.";
     };
 
@@ -50,7 +66,7 @@ in
 
     stateDir = lib.mkOption {
       type = lib.types.path;
-      default = "/var/lib/agentmom";
+      default = "/var/lib/agentmom-web";
       description = "Persistent service state directory.";
     };
 
@@ -63,7 +79,16 @@ in
     openRouterKeyFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
-      description = "File containing either a raw OpenRouter API key or OPENROUTER_API_KEY=...";
+      description = ''
+        File containing either a raw OpenRouter API key or OPENROUTER_API_KEY=...
+        The service reads this through systemd credentials, so the source file can remain root-only.
+      '';
+    };
+
+    authEnabled = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Whether the web app requires login.";
     };
 
     deploymentBaseDomain = lib.mkOption {
@@ -76,6 +101,23 @@ in
       type = lib.types.str;
       default = "anthropic/claude-sonnet-4.5";
       description = "OpenRouter model id.";
+    };
+
+    caddy = {
+      enable = lib.mkEnableOption "same-host Caddy reverse proxy for Agent Mom";
+
+      publicDomain = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "agentmom.xyz";
+        description = "Main public hostname served by Caddy.";
+      };
+
+      openFirewall = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Open TCP ports 80 and 443 when same-host Caddy is enabled.";
+      };
     };
 
     smolvm = {
@@ -123,88 +165,120 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
-    virtualisation.podman.enable = true;
+  config = lib.mkIf cfg.enable (lib.mkMerge [
+    {
+      virtualisation.podman.enable = true;
 
-    users.manageLingering = true;
-    users.groups.${cfg.group} = { };
-    users.users.${cfg.user} = {
-      isSystemUser = true;
-      group = cfg.group;
-      extraGroups = [ "kvm" ];
-      home = cfg.stateDir;
-      createHome = true;
-      linger = true;
-      subUidRanges = [{ startUid = 200000; count = 65536; }];
-      subGidRanges = [{ startGid = 200000; count = 65536; }];
-    };
+      users.manageLingering = true;
+      users.groups.${cfg.group} = { };
+      users.users.${cfg.user} = {
+        isSystemUser = true;
+        group = cfg.group;
+        extraGroups = [ "kvm" ];
+        home = cfg.stateDir;
+        createHome = true;
+        linger = true;
+        subUidRanges = [{ startUid = 200000; count = 65536; }];
+        subGidRanges = [{ startGid = 200000; count = 65536; }];
+      };
 
-    systemd.tmpfiles.rules = [
-      "d ${cfg.stateDir} 0750 ${cfg.user} ${cfg.group} - -"
-      "d ${cfg.workspaceDir} 0750 ${cfg.user} ${cfg.group} - -"
-      "d ${cfg.workspaceDir}/projects 0750 ${cfg.user} ${cfg.group} - -"
-      "d ${cfg.stateDir}/app 0750 ${cfg.user} ${cfg.group} - -"
-      "d ${cfg.stateDir}/xdg-cache 0750 ${cfg.user} ${cfg.group} - -"
-      "d ${cfg.stateDir}/xdg-data 0750 ${cfg.user} ${cfg.group} - -"
-    ];
-
-    systemd.services.agentmom = {
-      description = "Agent Mom";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" ];
-      wants = [ "network-online.target" ];
-      path = [
-        cfg.smolvm.package
-        uidmapWrappers
-        pkgs.curl
-        pkgs.e2fsprogs
-        pkgs.file
-        pkgs.git
-        pkgs.go-containerregistry
-        pkgs.gnutar
-        pkgs.podman
+      systemd.tmpfiles.rules = [
+        "d ${cfg.stateDir} 0750 ${cfg.user} ${cfg.group} - -"
+        "d ${cfg.workspaceDir} 0750 ${cfg.user} ${cfg.group} - -"
+        "d ${cfg.workspaceDir}/projects 0750 ${cfg.user} ${cfg.group} - -"
+        "d ${cfg.stateDir}/app 0750 ${cfg.user} ${cfg.group} - -"
+        "d ${cfg.stateDir}/xdg-cache 0750 ${cfg.user} ${cfg.group} - -"
+        "d ${cfg.stateDir}/xdg-data 0750 ${cfg.user} ${cfg.group} - -"
       ];
-      environment =
-        {
-          AGENTMOM_AGENT_DIR = "${cfg.stateDir}/app/pi";
-          AGENTMOM_EXECUTOR = "smolvm";
-          AGENTMOM_HOST = cfg.host;
-          AGENTMOM_OPENROUTER_MODEL = cfg.model;
-          AGENTMOM_PODMAN_COMMAND = lib.getExe pkgs.podman;
-          AGENTMOM_PORT = toString cfg.port;
-          AGENTMOM_SESSION_DIR = "${cfg.stateDir}/app/sessions";
-          AGENTMOM_SMOLVM_COMMAND = lib.getExe cfg.smolvm.package;
-          AGENTMOM_SMOLVM_CPUS = toString cfg.smolvm.cpus;
-          AGENTMOM_SMOLVM_IMAGE = cfg.smolvm.image;
-          AGENTMOM_SMOLVM_MEMORY_MB = toString cfg.smolvm.memoryMb;
-          AGENTMOM_SMOLVM_NAME = cfg.smolvm.name;
-          AGENTMOM_SMOLVM_OVERLAY_GIB = toString cfg.smolvm.overlayGib;
-          AGENTMOM_SMOLVM_STORAGE_GIB = toString cfg.smolvm.storageGib;
-          AGENTMOM_STATE_DIR = "${cfg.stateDir}/app";
-          AGENTMOM_WORKSPACE = cfg.workspaceDir;
-          HOME = cfg.stateDir;
-          NODE_ENV = "production";
-          XDG_CACHE_HOME = "${cfg.stateDir}/xdg-cache";
-          XDG_DATA_HOME = "${cfg.stateDir}/xdg-data";
-          XDG_RUNTIME_DIR = "/run/user/%U";
+
+      systemd.services.${cfg.serviceName} = {
+        description = "Agent Mom web app";
+        wantedBy = [ "multi-user.target" ];
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
+        path = [
+          cfg.smolvm.package
+          uidmapWrappers
+          pkgs.curl
+          pkgs.e2fsprogs
+          pkgs.file
+          pkgs.git
+          pkgs.go-containerregistry
+          pkgs.gnutar
+          pkgs.podman
+        ];
+        environment =
+          {
+            AGENTMOM_AGENT_DIR = "${cfg.stateDir}/app/pi";
+            AGENTMOM_AUTH_ENABLED = if cfg.authEnabled then "1" else "0";
+            AGENTMOM_EXECUTOR = "smolvm";
+            AGENTMOM_HOST = cfg.host;
+            AGENTMOM_OPENROUTER_MODEL = cfg.model;
+            AGENTMOM_PODMAN_COMMAND = lib.getExe pkgs.podman;
+            AGENTMOM_PORT = toString cfg.port;
+            AGENTMOM_SESSION_DIR = "${cfg.stateDir}/app/sessions";
+            AGENTMOM_SMOLVM_COMMAND = lib.getExe cfg.smolvm.package;
+            AGENTMOM_SMOLVM_CPUS = toString cfg.smolvm.cpus;
+            AGENTMOM_SMOLVM_IMAGE = cfg.smolvm.image;
+            AGENTMOM_SMOLVM_MEMORY_MB = toString cfg.smolvm.memoryMb;
+            AGENTMOM_SMOLVM_NAME = cfg.smolvm.name;
+            AGENTMOM_SMOLVM_OVERLAY_GIB = toString cfg.smolvm.overlayGib;
+            AGENTMOM_SMOLVM_STORAGE_GIB = toString cfg.smolvm.storageGib;
+            AGENTMOM_STATE_DIR = "${cfg.stateDir}/app";
+            AGENTMOM_WORKSPACE = cfg.workspaceDir;
+            HOME = cfg.stateDir;
+            NODE_ENV = "production";
+            XDG_CACHE_HOME = "${cfg.stateDir}/xdg-cache";
+            XDG_DATA_HOME = "${cfg.stateDir}/xdg-data";
+            XDG_RUNTIME_DIR = "/run/user/%U";
+          }
+          // lib.optionalAttrs (cfg.deploymentBaseDomain != null) {
+            AGENTMOM_DEPLOYMENT_BASE_DOMAIN = cfg.deploymentBaseDomain;
+          };
+        serviceConfig =
+          {
+            Delegate = true;
+            ExecStart = startScript;
+            Group = cfg.group;
+            KillMode = "process";
+            Restart = "on-failure";
+            RestartSec = 3;
+            Type = "simple";
+            User = cfg.user;
+            WorkingDirectory = cfg.workspaceDir;
+          }
+          // lib.optionalAttrs (cfg.openRouterKeyFile != null) {
+            LoadCredential = [ "openrouter:${toString cfg.openRouterKeyFile}" ];
+          };
+      };
+    }
+
+    (lib.mkIf cfg.caddy.enable {
+      services.caddy.enable = true;
+      services.caddy.globalConfig = lib.mkIf (cfg.deploymentBaseDomain != null) ''
+        on_demand_tls {
+          ask ${proxyUrl}/api/tls-ask
+        }
+      '';
+      services.caddy.virtualHosts =
+        lib.optionalAttrs (cfg.caddy.publicDomain != null) {
+          "${cfg.caddy.publicDomain}".extraConfig = ''
+            reverse_proxy ${proxyAddress}
+          '';
         }
         // lib.optionalAttrs (cfg.deploymentBaseDomain != null) {
-          AGENTMOM_DEPLOYMENT_BASE_DOMAIN = cfg.deploymentBaseDomain;
-        }
-        // lib.optionalAttrs (cfg.openRouterKeyFile != null) {
-          AGENTMOM_OPENROUTER_ENV_FILE = toString cfg.openRouterKeyFile;
-      };
-      serviceConfig = {
-        Delegate = true;
-        ExecStart = lib.getExe cfg.package;
-        Group = cfg.group;
-        KillMode = "process";
-        Restart = "on-failure";
-        RestartSec = 3;
-        Type = "simple";
-        User = cfg.user;
-        WorkingDirectory = cfg.workspaceDir;
-      };
-    };
-  };
+          "${cfg.deploymentBaseDomain}".extraConfig = ''
+            reverse_proxy ${proxyAddress}
+          '';
+          "*.${cfg.deploymentBaseDomain}".extraConfig = ''
+            tls {
+              on_demand
+            }
+            reverse_proxy ${proxyAddress}
+          '';
+        };
+
+      networking.firewall.allowedTCPPorts = lib.mkIf cfg.caddy.openFirewall [ 80 443 ];
+    })
+  ]);
 }
