@@ -36,19 +36,19 @@ in
 
     serviceName = lib.mkOption {
       type = lib.types.str;
-      default = "agentmom-web";
+      default = "agentmom";
       description = "systemd unit name for the web service.";
     };
 
     user = lib.mkOption {
       type = lib.types.str;
-      default = "agentmom-web";
+      default = "agentmom";
       description = "User that runs Agent Mom.";
     };
 
     group = lib.mkOption {
       type = lib.types.str;
-      default = "agentmom-web";
+      default = "agentmom";
       description = "Group that runs Agent Mom.";
     };
 
@@ -66,7 +66,7 @@ in
 
     stateDir = lib.mkOption {
       type = lib.types.path;
-      default = "/var/lib/agentmom-web";
+      default = "/var/lib/agentmom";
       description = "Persistent service state directory.";
     };
 
