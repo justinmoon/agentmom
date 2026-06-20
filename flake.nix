@@ -11,14 +11,23 @@
       url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    colmena = {
+      url = "github:nix-community/colmena";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, agenix, disko, ... }:
+  outputs = { self, nixpkgs, agenix, disko, colmena, ... }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forAllSystems = f:
         nixpkgs.lib.genAttrs systems (system:
           f { pkgs = nixpkgs.legacyPackages.${system}; inherit system; });
+      hostModules = [
+        agenix.nixosModules.default
+        disko.nixosModules.disko
+        ./nix/hosts/mom-1/configuration.nix
+      ];
       mkHost = module:
         nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
@@ -30,13 +39,14 @@
           ];
         };
     in {
-      devShells = forAllSystems ({ pkgs, ... }: {
+      devShells = forAllSystems ({ pkgs, system, ... }: {
         default = pkgs.mkShell {
           packages = with pkgs; [
             git
             just
             nodejs_24
             podman
+            colmena.packages.${system}.colmena
           ];
 
           shellHook = ''
@@ -72,5 +82,29 @@
 
       nixosConfigurations.mom-stage-1 = mkHost ./nix/hosts/mom-stage-1/configuration.nix;
       nixosConfigurations.mom-1 = mkHost ./nix/hosts/mom-1/configuration.nix;
+
+      colmenaHive = colmena.lib.makeHive {
+        meta = {
+          name = "agentmom";
+          description = "Agent Mom production host";
+          allowApplyAll = false;
+          nixpkgs = import nixpkgs {
+            system = "x86_64-linux";
+            config.allowUnfree = true;
+          };
+          specialArgs = { inherit self; };
+        };
+
+        mom-1 = {
+          imports = hostModules;
+          deployment = {
+            targetHost = "mom-1";
+            targetUser = "justin";
+            buildOnTarget = true;
+            replaceUnknownProfiles = true;
+            tags = [ "agentmom" "prod" ];
+          };
+        };
+      };
     };
 }

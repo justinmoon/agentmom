@@ -3,10 +3,18 @@
 This repo owns the deployable service shape: app package, systemd unit, Podman,
 smolvm, state directories, and optional same-host Caddy routes.
 
-Full host outputs live here too:
+Production deploys use Colmena:
 
 ```bash
-nixos-rebuild switch --flake .#mom-stage-1 --target-host mom-stage-1
+just deploy-prod
+```
+
+That applies the `mom-1` NixOS host from this repo and then runs a small health
+check against the local service on the host.
+
+The equivalent direct NixOS switch is:
+
+```bash
 nixos-rebuild switch --flake .#mom-1 --target-host mom-1
 ```
 

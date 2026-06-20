@@ -172,7 +172,6 @@ in
       environment.systemPackages = [
         cfg.package
         cfg.smolvm.package
-        pkgs.podman
       ];
 
       users.manageLingering = true;

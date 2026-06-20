@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config.js";
@@ -20,6 +20,8 @@ try {
 
   assert.equal(guestBinDir, hostBinDir);
   assert.equal(existsSync(mom), true);
+  chmodSync(mom, 0o444);
+  previews.cliInstall();
 
   const exposeOutput = execFileSync(mom, ["expose", "4321", "demo app"], { encoding: "utf8" });
   assert.deepEqual(previews.parseSentinelOutput(exposeOutput), [{ port: 4321, name: "demo app" }]);

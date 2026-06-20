@@ -1,4 +1,4 @@
-import { chmodSync, copyFileSync, mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { posix as pathPosix } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -127,10 +127,14 @@ export class PreviewManager {
   cliInstall(): { hostBinDir: string; guestBinDir: string } {
     const hostBinDir = join(this.config.projectsDir, ".agentmom", "bin");
     const hostCliPath = join(hostBinDir, "mom");
+    const hostProtocolPath = join(hostBinDir, "mom-cli-protocol.json");
     mkdirSync(hostBinDir, { recursive: true });
+    rmSync(hostCliPath, { force: true });
+    rmSync(hostProtocolPath, { force: true });
     copyFileSync(MOM_CLI_SOURCE, hostCliPath);
-    copyFileSync(MOM_CLI_PROTOCOL_SOURCE, join(hostBinDir, "mom-cli-protocol.json"));
+    copyFileSync(MOM_CLI_PROTOCOL_SOURCE, hostProtocolPath);
     chmodSync(hostCliPath, 0o755);
+    chmodSync(hostProtocolPath, 0o644);
 
     const guestBinDir =
       this.config.executor === "smolvm"

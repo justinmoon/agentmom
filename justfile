@@ -36,6 +36,45 @@ podman:
 start:
     nix develop -c npm run start
 
+fleet-build-prod:
+    nix develop -c colmena build --on mom-1
+
+fleet-status-prod:
+    nix develop -c colmena exec --on mom-1 -- systemctl --no-pager --failed
+
+check-prod:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    ssh mom-1 'bash -se' <<'REMOTE'
+    set -euo pipefail
+
+    for attempt in $(seq 1 60); do
+      health_json="$(curl -fsS http://127.0.0.1:7392/api/health || true)"
+      if [[ "${health_json}" == *'"ok":true'* ]]; then
+        echo "${health_json}"
+        break
+      fi
+      if [[ "${attempt}" == "60" ]]; then
+        echo "agentmom health check failed" >&2
+        [[ -n "${health_json}" ]] && echo "${health_json}" >&2
+        systemctl status agentmom --no-pager -n 80 >&2 || true
+        exit 1
+      fi
+      sleep 1
+    done
+
+    me_status="$(curl -sS -o /tmp/agentmom-deploy-me.json -w '%{http_code}' http://127.0.0.1:7392/api/me)"
+    if [[ "${me_status}" != "401" ]]; then
+      echo "expected unauthenticated /api/me to return 401, got ${me_status}" >&2
+      cat /tmp/agentmom-deploy-me.json >&2
+      exit 1
+    fi
+    grep -q '"authEnabled":true' /tmp/agentmom-deploy-me.json
+
+    echo "prod check ok"
+    REMOTE
+
 deploy-stage:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -95,59 +134,6 @@ deploy-stage:
     REMOTE
 
 deploy-prod:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    branch="$(git branch --show-current)"
-    if [[ "${branch}" != "master" ]]; then
-      echo "deploy-prod expects master; current branch is ${branch}" >&2
-      exit 1
-    fi
-
-    if ! git diff --quiet || ! git diff --cached --quiet; then
-      echo "commit or stash local changes before deploy-prod" >&2
-      exit 1
-    fi
-
-    git push origin master
-
-    ssh mom-1 'bash -se' <<'REMOTE'
-    set -euo pipefail
-    sudo mkdir -p /srv/agentmom/source
-    sudo chown -R justin:users /srv/agentmom
-    rm -rf /srv/agentmom/source/*
-    REMOTE
-
-    git archive --format=tar HEAD | ssh mom-1 'tar -xf - -C /srv/agentmom/source'
-
-    ssh mom-1 'bash -se' <<'REMOTE'
-    set -euo pipefail
-    cd /srv/agentmom
-    nix build --out-link result /srv/agentmom/source#agentmom
-    sudo systemctl restart agentmom
-
-    for attempt in $(seq 1 60); do
-      health_json="$(curl -fsS http://127.0.0.1:7392/api/health || true)"
-      if [[ "${health_json}" == *'"ok":true'* ]]; then
-        echo "${health_json}"
-        break
-      fi
-      if [[ "${attempt}" == "60" ]]; then
-        echo "agentmom health check failed" >&2
-        [[ -n "${health_json}" ]] && echo "${health_json}" >&2
-        sudo systemctl status agentmom --no-pager -n 80 >&2 || true
-        exit 1
-      fi
-      sleep 1
-    done
-
-    me_status="$(curl -sS -o /tmp/agentmom-deploy-me.json -w '%{http_code}' http://127.0.0.1:7392/api/me)"
-    if [[ "${me_status}" != "401" ]]; then
-      echo "expected unauthenticated /api/me to return 401, got ${me_status}" >&2
-      cat /tmp/agentmom-deploy-me.json >&2
-      exit 1
-    fi
-    grep -q '"authEnabled":true' /tmp/agentmom-deploy-me.json
-
-    echo "prod deploy ok"
-    REMOTE
+    nix develop -c colmena apply --on mom-1
+    nix develop -c colmena exec --on mom-1 -- sudo systemctl restart agentmom
+    just check-prod
