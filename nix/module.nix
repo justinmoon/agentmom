@@ -278,15 +278,23 @@ in
           '';
         }
         // lib.optionalAttrs (cfg.deploymentBaseDomain != null) {
-          "${cfg.deploymentBaseDomain}".extraConfig = ''
-            reverse_proxy ${proxyAddress}
-          '';
-          "*.${cfg.deploymentBaseDomain}".extraConfig = ''
-            tls {
-              on_demand
-            }
-            reverse_proxy ${proxyAddress}
-          '';
+          "https://" = {
+            logFormat = "output file /var/log/caddy/access-deployments.log";
+            extraConfig = ''
+              tls {
+                on_demand
+              }
+              @agentmom_reserved host mom.${cfg.deploymentBaseDomain}
+              handle @agentmom_reserved {
+                abort
+              }
+              @agentmom_deployment host *.${cfg.deploymentBaseDomain}
+              handle @agentmom_deployment {
+                reverse_proxy ${proxyAddress}
+              }
+              abort
+            '';
+          };
         };
 
       networking.firewall.allowedTCPPorts = lib.mkIf cfg.caddy.openFirewall [ 80 443 ];

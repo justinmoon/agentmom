@@ -37,7 +37,7 @@ or import the base module and set options directly:
     stateDir = "/data/agentmom-web";
     workspaceDir = "/data/agentmom-web/workspace";
     openRouterKeyFile = "/run/agenix/agentmom-openrouter-api-key";
-    deploymentBaseDomain = "mom.agentmom.xyz";
+    deploymentBaseDomain = "agentmom.xyz";
 
     caddy = {
       enable = true;
@@ -67,5 +67,4 @@ RULES=nix/secrets/secrets.nix agenix -e nix/secrets/openrouter-api-key.age -i ~/
 ```
 
 The stage and prod host modules assume Caddy runs on the same host as the app.
-If DNS still points at a separate proxy host, that proxy can import a tiny
-repo-owned Caddy profile later, but the app host should still use this module.
+For prod, `agentmom.xyz` and `*.agentmom.xyz` should point at `mom-1`.

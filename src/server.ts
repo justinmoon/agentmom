@@ -11,7 +11,7 @@ import {
 } from "./catalog.js";
 import { loadConfig } from "./config.js";
 import { seedDevAuthUsers } from "./dev-auth.js";
-import { deploymentPath, deploymentSlugFromHost, isAllowedDeploymentDomain } from "./deployment-routing.js";
+import { deploymentPath, deploymentSlugFromHost } from "./deployment-routing.js";
 import { DeploymentManager } from "./deployments.js";
 import {
   deploymentRequestHeaders,
@@ -54,7 +54,8 @@ const server = createServer(async (req, res) => {
 
     if (url.pathname === "/api/tls-ask" && req.method === "GET") {
       const domain = url.searchParams.get("domain") ?? undefined;
-      if (isAllowedDeploymentDomain(domain, config.deploymentBaseDomain)) {
+      const slug = deploymentSlugFromHost(domain, config.deploymentBaseDomain);
+      if (slug && (await deployments.isRoutable(slug))) {
         res.writeHead(200);
         res.end("ok");
       } else {

@@ -1,5 +1,7 @@
 export type DeploymentRouteMode = "path" | "host";
 
+const RESERVED_DEPLOYMENT_SLUGS = new Set(["mom"]);
+
 export function deploymentPath(pathname: string): { slug: string; upstreamPath: string } | undefined {
   const prefix = "/deploy/";
   if (!pathname.startsWith(prefix)) return undefined;
@@ -26,6 +28,7 @@ export function deploymentSlugFromHost(hostHeader: string | undefined, baseDomai
 
   const slug = host.slice(0, -(base.length + 1));
   if (!slug || slug.includes(".")) return undefined;
+  if (isReservedDeploymentSlug(slug)) return undefined;
   return slugify(slug) === slug ? slug : undefined;
 }
 
@@ -35,7 +38,7 @@ export function isAllowedDeploymentDomain(domain: string | undefined, baseDomain
   const host = domain.split(":")[0]?.toLowerCase().replace(/\.$/, "");
   const base = baseDomain.toLowerCase().replace(/\.$/, "");
   if (!host) return false;
-  return host === base || deploymentSlugFromHost(host, base) !== undefined;
+  return deploymentSlugFromHost(host, base) !== undefined;
 }
 
 export function slugify(value: string): string {
@@ -44,4 +47,8 @@ export function slugify(value: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
+}
+
+export function isReservedDeploymentSlug(slug: string): boolean {
+  return RESERVED_DEPLOYMENT_SLUGS.has(slug.toLowerCase());
 }

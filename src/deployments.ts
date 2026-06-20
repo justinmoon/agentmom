@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { AppConfig } from "./config.js";
-import { type DeploymentRouteMode, slugify } from "./deployment-routing.js";
+import { isReservedDeploymentSlug, type DeploymentRouteMode, slugify } from "./deployment-routing.js";
 import { allocatePort, runCommand, sleep, truncateLog } from "./process-utils.js";
 import type { DeploymentRecord } from "./types.js";
 import type { PreviewFetchRequest, PreviewFetchResponse } from "./previews.js";
@@ -47,6 +47,11 @@ export class DeploymentManager {
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
+  async isRoutable(slug: string): Promise<boolean> {
+    const deployment = await this.find(slug);
+    return deployment?.status === "running";
+  }
+
   async publish(input: PublishDeploymentInput): Promise<DeploymentRecord> {
     const projectPath = this.resolveProjectPath(input.path);
     const dockerfile = join(projectPath, "Dockerfile");
@@ -56,6 +61,7 @@ export class DeploymentManager {
 
     const slug = slugify(input.slug || basename(projectPath));
     if (!slug) throw new Error("Deployment slug is required");
+    if (isReservedDeploymentSlug(slug)) throw new Error(`Deployment slug is reserved: ${slug}`);
 
     const containerPort = input.port ?? 3000;
     if (!Number.isInteger(containerPort) || containerPort < 1 || containerPort > 65535) {
