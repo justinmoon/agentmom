@@ -3,14 +3,32 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    agenix = {
+      url = "github:ryantm/agenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    disko = {
+      url = "github:nix-community/disko";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, ... }:
+  outputs = { self, nixpkgs, agenix, disko, ... }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forAllSystems = f:
         nixpkgs.lib.genAttrs systems (system:
           f { pkgs = nixpkgs.legacyPackages.${system}; inherit system; });
+      mkHost = module:
+        nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          specialArgs = { inherit self; };
+          modules = [
+            agenix.nixosModules.default
+            disko.nixosModules.disko
+            module
+          ];
+        };
     in {
       devShells = forAllSystems ({ pkgs, ... }: {
         default = pkgs.mkShell {
@@ -51,5 +69,8 @@
       nixosModules.agentmomWeb = import ./nix/module.nix { inherit self; };
       nixosModules.stageHost = import ./nix/hosts/stage.nix { inherit self; };
       nixosModules.prodHost = import ./nix/hosts/prod.nix { inherit self; };
+
+      nixosConfigurations.mom-stage-1 = mkHost ./nix/hosts/mom-stage-1/configuration.nix;
+      nixosConfigurations.mom-1 = mkHost ./nix/hosts/mom-1/configuration.nix;
     };
 }

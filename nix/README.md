@@ -3,7 +3,15 @@
 This repo owns the deployable service shape: app package, systemd unit, Podman,
 smolvm, state directories, and optional same-host Caddy routes.
 
-Host configs should only import one of these modules:
+Full host outputs live here too:
+
+```bash
+nixos-rebuild switch --flake .#mom-stage-1 --target-host mom-stage-1
+nixos-rebuild switch --flake .#mom-1 --target-host mom-1
+```
+
+If another repo owns the surrounding host config, it should only import one of
+these modules:
 
 ```nix
 inputs.agentmom.nixosModules.stageHost

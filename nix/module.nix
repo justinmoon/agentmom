@@ -169,6 +169,12 @@ in
     {
       virtualisation.podman.enable = true;
 
+      environment.systemPackages = [
+        cfg.package
+        cfg.smolvm.package
+        pkgs.podman
+      ];
+
       users.manageLingering = true;
       users.groups.${cfg.group} = { };
       users.users.${cfg.user} = {
