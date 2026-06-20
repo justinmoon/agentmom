@@ -76,9 +76,10 @@ export class TelegramChannel {
       clearTimeout(this.restartTimer);
       this.restartTimer = undefined;
     }
-    if (!this.startTask) return;
+    const task = this.startTask;
+    if (!task) return;
     await this.bot.stop().catch(() => undefined);
-    await this.startTask.catch(() => undefined);
+    await task.catch(() => undefined);
     this.startTask = undefined;
   }
 
