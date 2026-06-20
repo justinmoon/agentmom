@@ -39,6 +39,8 @@ type RegisterPreviewInput = {
 
 export type PreviewRegistration = RegisterPreviewInput & {
   name: string;
+  command?: string;
+  cwd?: string;
 };
 
 export type DeploymentRegistration = {

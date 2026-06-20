@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config.js";
@@ -26,6 +26,15 @@ try {
   const exposeOutput = execFileSync(mom, ["expose", "4321", "demo app"], { encoding: "utf8" });
   assert.deepEqual(previews.parseSentinelOutput(exposeOutput), [{ port: 4321, name: "demo app" }]);
   assertCliFails(mom, ["expose", "4321xyz", "bad port"], /Usage/);
+
+  const serveOutput = execFileSync(mom, ["serve", "4321", "demo app", "--", "node", "server.js"], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.deepEqual(previews.parseSentinelOutput(serveOutput), [
+    { port: 4321, name: "demo app", cwd: realpathSync(root), command: "node server.js" }
+  ]);
+  assertCliFails(mom, ["serve", "4321", "missing command"], /Usage/);
 
   const deployOutput = execFileSync(
     mom,

@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { getModel } from "@earendil-works/pi-ai";
@@ -44,6 +45,7 @@ export class PiBridge {
   private events: UiEvent[] = [];
   private listeners = new Set<StateListener>();
   private smolvm?: SmolvmRuntime;
+  private previewProcesses = new Set<ChildProcess>();
 
   constructor(
     private readonly config: AppConfig,
@@ -127,8 +129,9 @@ export class PiBridge {
         ...base,
         [
           "## Agent Mom Preview",
-          "- Start preview servers yourself from the project directory.",
-          "- Then expose the running port with `mom expose <port> <name>`.",
+          "- For preview servers, run `mom serve <port> <name> -- <command>` from the project directory.",
+          "- Example: `mom serve 8080 \"My App\" -- npm run dev -- --host 0.0.0.0`.",
+          "- Use `mom expose <port> <name>` only if a preview server is already running.",
           "- The preview name is required and should be human-readable.",
           "- Do not expose the parent workspace directory unless the user asked for a directory listing.",
           "",
@@ -256,6 +259,7 @@ export class PiBridge {
   dispose(): void {
     this.disposeCurrentSession();
     void this.smolvm?.dispose();
+    this.disposePreviewProcesses();
     this.listeners.clear();
   }
 
@@ -439,6 +443,7 @@ export class PiBridge {
 
   private async handlePreviewRegistration(registration: PreviewRegistration): Promise<void> {
     try {
+      await this.startPreviewProcess(registration);
       const service = this.previews.register(registration);
       this.addEvent("preview", "Preview exposed", `${service.name} ${service.path}`);
       this.emit();
@@ -446,6 +451,33 @@ export class PiBridge {
       this.addEvent("preview", "Preview registration failed", error instanceof Error ? error.message : String(error), true);
       this.emit();
     }
+  }
+
+  private async startPreviewProcess(registration: PreviewRegistration): Promise<void> {
+    if (!registration.command) return;
+
+    const cwd = this.resolveAgentPath(registration.cwd ?? this.config.agentCwd);
+    if (this.config.executor === "smolvm") {
+      this.smolvm ??= new SmolvmRuntime(this.config);
+      await this.smolvm.startProcess(registration.command, cwd);
+    } else {
+      const child = spawn("sh", ["-lc", registration.command], {
+        cwd,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true
+      });
+      this.previewProcesses.add(child);
+      child.on("close", () => this.previewProcesses.delete(child));
+    }
+    this.addEvent("preview", "Preview process started", `${registration.name} :${registration.port}`);
+  }
+
+  private disposePreviewProcesses(): void {
+    for (const child of this.previewProcesses) {
+      child.kill("SIGTERM");
+    }
+    this.previewProcesses.clear();
   }
 
   private async handleDeploymentRegistration(

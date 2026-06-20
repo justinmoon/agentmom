@@ -9,7 +9,12 @@ function fail(message) {
 }
 
 function usage() {
-  fail("Usage:\n  mom expose <port> <name>\n  mom deploy --cwd <absolute-path> --port <port> --slug <slug>");
+  fail(
+    "Usage:\n" +
+      "  mom expose <port> <name>\n" +
+      "  mom serve <port> <name> -- <command>\n" +
+      "  mom deploy --cwd <absolute-path> --port <port> --slug <slug>"
+  );
 }
 
 function parsePort(value) {
@@ -49,6 +54,20 @@ if (command === "expose") {
 
   console.log(previewSentinel + JSON.stringify({ port, name }));
   console.log(`Preview exposed: ${name} on port ${port}`);
+  process.exit(0);
+}
+
+if (command === "serve") {
+  const port = parsePort(args[0]);
+  const separator = args.indexOf("--");
+  if (separator < 2 || separator === args.length - 1) usage();
+
+  const name = args.slice(1, separator).join(" ").trim();
+  const serveCommand = args.slice(separator + 1).join(" ").trim();
+  if (!name || !serveCommand) usage();
+
+  console.log(previewSentinel + JSON.stringify({ port, name, cwd: process.cwd(), command: serveCommand }));
+  console.log(`Preview server requested: ${name} on port ${port}`);
   process.exit(0);
 }
 
