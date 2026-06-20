@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import {
   CatalogStore,
@@ -13,7 +12,7 @@ import {
 } from "./catalog.js";
 import { loadConfig } from "./config.js";
 import { DeploymentManager, deploymentPath, deploymentSlugFromHost, isAllowedDeploymentDomain } from "./deployments.js";
-import { requestHeaders } from "./previews.js";
+import { requestHeaders } from "./proxy-utils.js";
 import { TelegramChannel } from "./telegram-channel.js";
 import type { AppState } from "./types.js";
 import { WorkspaceRuntimeManager } from "./workspace-runtime.js";
@@ -640,5 +639,3 @@ function listenOn(port: number): Promise<number> {
 function isAddressInUse(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "EADDRINUSE";
 }
-
-export const serverUrl = pathToFileURL(config.rootDir).toString();

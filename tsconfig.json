@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "web/**/*.tsx", "vite.config.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "web/**/*.ts", "web/**/*.tsx", "vite.config.ts"]
 }

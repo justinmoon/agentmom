@@ -4,7 +4,7 @@ dev:
     nix develop -c npm run dev
 
 dev-auth:
-    AGENTMOM_AUTH_ENABLED=1 AGENTMOM_STATE_DIR=.agentmom-auth AGENTMOM_DEV_AUTH_PASSWORD=password AGENTMOM_DEV_AUTH_USERS='mail@justinmoon.com|Justin Moon|admin,autumndomingo@gmail.com|Autumn Domingo|user' nix develop -c npm run dev
+    AGENTMOM_AUTH_ENABLED=1 AGENTMOM_STATE_DIR=.agentmom-auth AGENTMOM_DEV_AUTH_PASSWORD=password AGENTMOM_DEV_AUTH_USERS='admin@bitcoin.com|Admin User|admin,user@bitcoin.com|Normal User|user' nix develop -c npm run dev
 
 install:
     nix develop -c npm install

@@ -5,6 +5,12 @@ import { spawn } from "node:child_process";
 import type { AppConfig } from "./config.js";
 import type { DeploymentRecord } from "./types.js";
 import type { PreviewFetchRequest, PreviewFetchResponse } from "./previews.js";
+import {
+  cleanResponseHeaders,
+  rewriteRootRelativeText,
+  shouldRewriteText,
+  textResponse
+} from "./proxy-utils.js";
 
 type DeploymentState = {
   deployments: DeploymentRecord[];
@@ -513,32 +519,23 @@ function rewriteDeploymentResponse(
   response: PreviewFetchResponse,
   mode: DeploymentRouteMode
 ): PreviewFetchResponse {
-  const headers = cleanResponseHeaders(response.headers);
+  const headers = cleanResponseHeaders(response.headers, { stripSetCookie: true });
   rewriteLocationHeader(headers, deployment, mode);
   const contentType = headers["content-type"] ?? "";
-  if (mode !== "path" || !shouldRewrite(contentType)) {
+  if (mode !== "path" || !shouldRewriteText(contentType)) {
     return { ...response, headers };
   }
 
-  const body = Buffer.from(rewriteText(response.body.toString("utf8"), deployment.slug, contentType), "utf8");
+  const body = Buffer.from(
+    rewriteRootRelativeText(response.body.toString("utf8"), `/deploy/${deployment.slug}/`, contentType),
+    "utf8"
+  );
   headers["content-length"] = String(body.byteLength);
   return {
     status: response.status,
     headers,
     body
   };
-}
-
-function cleanResponseHeaders(headers: Record<string, string>): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [rawName, value] of Object.entries(headers)) {
-    const name = rawName.toLowerCase();
-    if (HOP_BY_HOP_HEADERS.has(name)) continue;
-    if (name === "set-cookie" || name === "set-cookie2") continue;
-    if (name === "content-encoding" || name === "content-length" || name === "transfer-encoding") continue;
-    result[name] = value;
-  }
-  return result;
 }
 
 function rewriteLocationHeader(
@@ -568,42 +565,6 @@ function rewriteLocationHeader(
   }
 }
 
-function shouldRewrite(contentType: string): boolean {
-  return (
-    contentType.includes("text/html") ||
-    contentType.includes("text/css") ||
-    contentType.includes("javascript") ||
-    contentType.includes("ecmascript")
-  );
-}
-
-function rewriteText(content: string, slug: string, contentType: string): string {
-  const prefix = `/deploy/${slug}/`;
-  let next = content
-    .replace(/(\s(?:src|href|action|poster)=["'])\/(?!\/)/gi, `$1${prefix}`)
-    .replace(/(url\(["']?)\/(?!\/)/gi, `$1${prefix}`);
-
-  if (contentType.includes("javascript") || contentType.includes("ecmascript")) {
-    next = next
-      .replace(/(\bfrom\s*["'])\/(?!\/)/g, `$1${prefix}`)
-      .replace(/(\bimport\s*\(\s*["'])\/(?!\/)/g, `$1${prefix}`)
-      .replace(/(\bnew\s+URL\s*\(\s*["'])\/(?!\/)/g, `$1${prefix}`);
-  }
-
-  return next;
-}
-
-function textResponse(status: number, text: string): PreviewFetchResponse {
-  return {
-    status,
-    headers: {
-      "content-type": "text/plain; charset=utf-8",
-      "content-length": String(Buffer.byteLength(text))
-    },
-    body: Buffer.from(text, "utf8")
-  };
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
@@ -619,14 +580,3 @@ function slugify(value: string): string {
 function truncateLog(value: string, max = 24000): string {
   return value.length > max ? `${value.slice(-max)}\n[truncated]` : value;
 }
-
-const HOP_BY_HOP_HEADERS = new Set([
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade"
-]);

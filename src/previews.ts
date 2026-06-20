@@ -2,6 +2,13 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { posix as pathPosix } from "node:path";
 import type { AppConfig } from "./config.js";
+import {
+  cleanResponseHeaders,
+  rewriteRootRelativeText,
+  shouldRewriteText,
+  textResponse,
+  type ProxyFetchResponse
+} from "./proxy-utils.js";
 import type { PreviewService } from "./types.js";
 
 export const PREVIEW_SENTINEL = "__AGENTMOM_EXPOSE__";
@@ -14,11 +21,7 @@ export type PreviewFetchRequest = {
   body?: Buffer;
 };
 
-export type PreviewFetchResponse = {
-  status: number;
-  headers: Record<string, string>;
-  body: Buffer;
-};
+export type PreviewFetchResponse = ProxyFetchResponse;
 
 type RegisterPreviewInput = {
   port: number;
@@ -135,34 +138,6 @@ export class PreviewManager {
   }
 }
 
-export function previewPath(pathname: string): { id: string; upstreamPath: string } | undefined {
-  const prefix = "/preview/";
-  if (!pathname.startsWith(prefix)) return undefined;
-
-  const rest = pathname.slice(prefix.length);
-  const slash = rest.indexOf("/");
-  if (slash === -1) {
-    return { id: rest, upstreamPath: "/" };
-  }
-
-  const id = rest.slice(0, slash);
-  const upstreamPath = `/${rest.slice(slash + 1)}`;
-  return { id, upstreamPath };
-}
-
-export function requestHeaders(headers: NodeJS.Dict<string | string[]>): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [rawName, rawValue] of Object.entries(headers)) {
-    if (rawValue === undefined) continue;
-    const name = rawName.toLowerCase();
-    if (HOP_BY_HOP_HEADERS.has(name)) continue;
-    if (name === "host" || name === "content-length") continue;
-    result[name] = Array.isArray(rawValue) ? rawValue.join(", ") : rawValue;
-  }
-  result["accept-encoding"] = "identity";
-  return result;
-}
-
 async function fetchLocal(service: PreviewService, request: PreviewFetchRequest): Promise<PreviewFetchResponse> {
   const body =
     request.body && request.method !== "GET" && request.method !== "HEAD"
@@ -186,63 +161,16 @@ async function fetchLocal(service: PreviewService, request: PreviewFetchRequest)
 function rewritePreviewResponse(service: PreviewService, response: PreviewFetchResponse): PreviewFetchResponse {
   const headers = cleanResponseHeaders(response.headers);
   const contentType = headers["content-type"] ?? "";
-  if (!shouldRewrite(contentType)) {
+  if (!shouldRewriteText(contentType)) {
     return { ...response, headers };
   }
 
-  const body = Buffer.from(rewriteText(response.body.toString("utf8"), service.path, contentType), "utf8");
+  const body = Buffer.from(rewriteRootRelativeText(response.body.toString("utf8"), service.path, contentType), "utf8");
   headers["content-length"] = String(body.byteLength);
   return {
     status: response.status,
     headers,
     body
-  };
-}
-
-function cleanResponseHeaders(headers: Record<string, string>): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [rawName, value] of Object.entries(headers)) {
-    const name = rawName.toLowerCase();
-    if (HOP_BY_HOP_HEADERS.has(name)) continue;
-    if (name === "content-encoding" || name === "content-length" || name === "transfer-encoding") continue;
-    result[name] = value;
-  }
-  return result;
-}
-
-function shouldRewrite(contentType: string): boolean {
-  return (
-    contentType.includes("text/html") ||
-    contentType.includes("text/css") ||
-    contentType.includes("javascript") ||
-    contentType.includes("ecmascript")
-  );
-}
-
-function rewriteText(content: string, previewPath: string, contentType: string): string {
-  const prefix = previewPath;
-  let next = content
-    .replace(/(\s(?:src|href|action|poster)=["'])\/(?!\/)/gi, `$1${prefix}`)
-    .replace(/(url\(["']?)\/(?!\/)/gi, `$1${prefix}`);
-
-  if (contentType.includes("javascript") || contentType.includes("ecmascript")) {
-    next = next
-      .replace(/(\bfrom\s*["'])\/(?!\/)/g, `$1${prefix}`)
-      .replace(/(\bimport\s*\(\s*["'])\/(?!\/)/g, `$1${prefix}`)
-      .replace(/(\bnew\s+URL\s*\(\s*["'])\/(?!\/)/g, `$1${prefix}`);
-  }
-
-  return next;
-}
-
-function textResponse(status: number, text: string): PreviewFetchResponse {
-  return {
-    status,
-    headers: {
-      "content-type": "text/plain; charset=utf-8",
-      "content-length": String(Buffer.byteLength(text))
-    },
-    body: Buffer.from(text, "utf8")
   };
 }
 
@@ -315,14 +243,3 @@ if (command === "deploy") {
 usage();
 `;
 }
-
-const HOP_BY_HOP_HEADERS = new Set([
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade"
-]);

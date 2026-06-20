@@ -18,21 +18,23 @@ buildNpmPackage {
       !(base == ".git"
         || base == ".direnv"
         || base == ".env"
+        || base == ".env.prod"
         || base == ".agentmom"
+        || base == ".agentmom-auth"
         || base == ".smoke-workspace"
         || base == ".smoke-smolvm-workspace"
         || base == "dist"
         || base == "node_modules"
         || base == "projects"
-        || base == "mutiny-wallet"
-        || base == "index.ts"
-        || base == "encode-event.ts"
+        || base == "result"
+        || base == "workspaces"
+        || base == "worktrees"
         || base == "npm-debug.log");
   };
 
   nodejs = nodejs_24;
   npmDepsFetcherVersion = 2;
-  npmDepsHash = "sha256-TlnaxvQpQoxEFM5SU6ZiCqmNTa1pOwicCbEkxdsTjes=";
+  npmDepsHash = "sha256-UDn9pif2IA8MHVA588KwtLqbHpM5Fxi1KlkzUBRjRBA=";
   makeCacheWritable = true;
 
   nativeBuildInputs = [ makeWrapper ];

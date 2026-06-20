@@ -5,12 +5,12 @@ result
 .agentmom/
 .agentmom-auth/
 .smoke-workspace/
+.smoke-smolvm-workspace/
 .env
 .env.prod
 npm-debug.log*
 
-# Local dogfood outputs from trying the agent in this workspace.
-/mutiny-wallet/
-/index.ts
-/encode-event.ts
+# Local runtime/dogfood outputs from trying the agent in this workspace.
 /projects/
+/workspaces/
+/worktrees/
