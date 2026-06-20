@@ -51,6 +51,21 @@ The OpenRouter key is passed with systemd credentials, so the source secret can
 stay root-only. Podman is enabled by the module and the service user gets
 subuid/subgid ranges for rootless container builds.
 
+Application secrets live in `nix/secrets/openrouter-api-key.age`. Despite the
+legacy filename, it is an env file read through a systemd credential and can
+contain:
+
+```env
+OPENROUTER_API_KEY=...
+AGENTMOM_TELEGRAM_BOT_TOKEN=...
+```
+
+Edit it with agenix:
+
+```bash
+RULES=nix/secrets/secrets.nix agenix -e nix/secrets/openrouter-api-key.age -i ~/configs/yubikeys/keys.txt
+```
+
 The stage and prod host modules assume Caddy runs on the same host as the app.
 If DNS still points at a separate proxy host, that proxy can import a tiny
 repo-owned Caddy profile later, but the app host should still use this module.

@@ -46,6 +46,7 @@
             just
             nodejs_24
             podman
+            agenix.packages.${system}.default
             colmena.packages.${system}.colmena
           ];
 
