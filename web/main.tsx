@@ -262,31 +262,6 @@ function App() {
             </div>
           </div>
 
-          <div className="workspace-block">
-            <span>Workspace</span>
-            {me.workspaces.length > 1 ? (
-              <select
-                value={selectedWorkspace.id}
-                onChange={(event) => {
-                  setSelectedWorkspaceId(event.target.value);
-                  setState(emptyState);
-                  setError(undefined);
-                }}
-              >
-                {me.workspaces.map((workspace) => (
-                  <option value={workspace.id} key={workspace.id}>
-                    {workspace.displayName}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <strong>{selectedWorkspace.displayName}</strong>
-            )}
-            <code title={state.agentCwd || selectedWorkspace.machineName}>
-              {state.agentCwd || selectedWorkspace.machineName}
-            </code>
-          </div>
-
           <div className="actions">
             <button type="button" onClick={newSession}>
               <SquarePen size={16} />
@@ -380,7 +355,6 @@ function App() {
 
             <div className="right-panel-slot" hidden={!rightPanelOpen}>
               <RightPanel
-                events={state.events}
                 previews={state.previews}
                 onCollapse={() => setRightPanelOpen(false)}
                 onRemovePreview={removePreview}

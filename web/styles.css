@@ -80,8 +80,7 @@ button {
   cursor: pointer;
 }
 
-/* Serif headings — Fraunces carries the brand personality.
-   Note: uppercase mini-labels (.sessions h2, .workspace-block span) stay sans. */
+/* Serif headings — Fraunces carries the brand personality. */
 .brand h1,
 .topbar strong,
 .empty-thread h2 {
@@ -202,13 +201,11 @@ a {
   font-size: 0.95rem;
 }
 
-.workspace-block,
 .runtime-block {
   display: grid;
   gap: 6px;
 }
 
-.workspace-block span,
 .runtime-block span,
 .sessions h2 {
   margin: 0;
@@ -216,11 +213,6 @@ a {
   font-size: 0.76rem;
   font-weight: 700;
   text-transform: uppercase;
-}
-
-.workspace-block strong {
-  color: var(--text);
-  font-size: 0.9rem;
 }
 
 input,
