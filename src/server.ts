@@ -37,7 +37,7 @@ import {
 } from "./types.js";
 import { WorkspaceRuntimeManager } from "./workspace-runtime.js";
 
-const config = loadConfig();
+const config = loadConfig({ requireServiceSecrets: true });
 const catalog = new CatalogStore(config);
 const deployments = new DeploymentManager(config);
 const runtimes = new WorkspaceRuntimeManager(config, deployments);
