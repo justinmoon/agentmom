@@ -57,8 +57,9 @@ export class PiBridge {
   private smolvm?: SmolvmRuntime;
   private previewProcesses = new Set<ChildProcess>();
   private sessionSummaries: SessionSummary[] = [];
-  private autoPreviewServers = new Set<HttpServer>();
+  private autoPreviewServers = new Map<string, HttpServer>();
   private autoServing = false;
+  private lastTurnStartedAt = 0;
 
   constructor(
     private readonly config: AppConfig,
@@ -246,6 +247,7 @@ export class PiBridge {
 
   removePreview(id: string): AppState {
     if (this.previews.remove(id)) {
+      this.closeAutoPreviewServer(id);
       this.addEvent("preview", "Preview removed", id);
       this.emit();
     }
@@ -274,6 +276,11 @@ export class PiBridge {
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
       this.addEvent("runtime", "Resume test failed", this.lastError, true);
+    } finally {
+      const removed = this.previews.removeByRuntime("smolvm");
+      if (removed.length > 0) {
+        this.addEvent("preview", "Cleared smolvm previews", `${removed.length} preview process(es) were stopped by resume testing`);
+      }
     }
 
     this.emit();
@@ -284,6 +291,7 @@ export class PiBridge {
     this.disposeCurrentSession();
     void this.smolvm?.dispose();
     this.disposePreviewProcesses();
+    this.disposeAutoPreviewServers();
     this.listeners.clear();
   }
 
@@ -299,10 +307,11 @@ export class PiBridge {
   private handleEvent(event: AgentSessionEvent): void {
     if (event.type === "agent_start") {
       this.isRunning = true;
+      this.lastTurnStartedAt = Date.now();
       this.addEvent("agent", "Turn started");
     } else if (event.type === "agent_end") {
       this.addEvent("agent", event.willRetry ? "Turn ended; retry pending" : "Turn ended");
-      if (!event.willRetry) void this.maybeAutoServePreview();
+      if (!event.willRetry) void this.maybeAutoServePreview(this.lastTurnStartedAt);
     } else if (event.type === "message_start" || event.type === "message_update" || event.type === "message_end") {
       const message = event.message;
       if (message.role === "user" || message.role === "assistant") {
@@ -501,12 +510,12 @@ export class PiBridge {
 
   // After a turn, if the agent built a renderable site but didn't expose it,
   // serve it automatically so the preview opens on its own.
-  private async maybeAutoServePreview(): Promise<void> {
+  private async maybeAutoServePreview(turnStartedAt: number): Promise<void> {
     if (this.autoServing) return;
     if (this.previews.list().length > 0) return;
     this.autoServing = true;
     try {
-      const dir = this.findRenderableDir();
+      const dir = this.findRenderableDir(turnStartedAt);
       if (!dir) return;
       const port = await allocatePort();
       const server = createStaticServer(dir);
@@ -514,10 +523,10 @@ export class PiBridge {
         server.once("error", reject);
         server.listen(port, "127.0.0.1", () => resolvePromise());
       });
-      this.autoPreviewServers.add(server);
-      server.on("close", () => this.autoPreviewServers.delete(server));
       const name = basename(dir) || "Preview";
-      this.previews.register({ port, name });
+      const service = this.previews.register({ port, name, runtime: "local" });
+      this.autoPreviewServers.set(service.id, server);
+      server.on("close", () => this.autoPreviewServers.delete(service.id));
       this.addEvent("preview", "Preview ready", `${name} is live — opening preview`);
       this.emit();
     } catch (error) {
@@ -529,16 +538,16 @@ export class PiBridge {
   }
 
   // Find the most recently built directory that has an index.html.
-  private findRenderableDir(): string | undefined {
+  private findRenderableDir(minModifiedAt: number): string | undefined {
     const root = this.resolveAgentPath(this.config.agentCwd);
     const candidates: string[] = [];
-    if (existsSync(join(root, "index.html"))) candidates.push(root);
+    if (isFreshStaticIndex(join(root, "index.html"), minModifiedAt)) candidates.push(root);
     try {
       for (const entry of readdirSync(root, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;
         if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
         const sub = join(root, entry.name);
-        if (existsSync(join(sub, "index.html"))) candidates.push(sub);
+        if (isFreshStaticIndex(join(sub, "index.html"), minModifiedAt)) candidates.push(sub);
       }
     } catch {
       // ignore unreadable directories
@@ -555,6 +564,19 @@ export class PiBridge {
       child.kill("SIGTERM");
     }
     this.previewProcesses.clear();
+  }
+
+  private closeAutoPreviewServer(id: string): void {
+    const server = this.autoPreviewServers.get(id);
+    if (!server) return;
+    this.autoPreviewServers.delete(id);
+    server.close();
+  }
+
+  private disposeAutoPreviewServers(): void {
+    for (const id of [...this.autoPreviewServers.keys()]) {
+      this.closeAutoPreviewServer(id);
+    }
   }
 
   private async handleDeploymentRegistration(
@@ -723,6 +745,16 @@ function truncate(value: string, max = 1200): string {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function isFreshStaticIndex(path: string, minModifiedAt: number): boolean {
+  try {
+    if (!existsSync(path) || statSync(path).mtimeMs < minModifiedAt - 1000) return false;
+    const html = readFileSync(path, "utf8");
+    return !/<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["']\/src\//i.test(html);
+  } catch {
+    return false;
+  }
 }
 
 const STATIC_MIME: Record<string, string> = {

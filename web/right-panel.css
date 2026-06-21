@@ -339,8 +339,8 @@
 
 @media (max-width: 980px) {
   .right-panel {
-    height: min(620px, 70vh);
-    min-height: 420px;
+    height: min(520px, 60vh);
+    min-height: 320px;
   }
 }
 

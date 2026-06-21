@@ -1,5 +1,6 @@
 import {
   ExternalLink,
+  FileJson,
   Monitor,
   PanelRightClose,
   Plus,
@@ -7,25 +8,28 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import type { PreviewService } from "../src/types.js";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AppState, PreviewService } from "../src/types.js";
 import "./right-panel.css";
 
 type RightPanelTab = {
   id: string;
-  type: "preview";
+  type: "preview" | "events";
   title: string;
 };
 
 const initialRightTabs: RightPanelTab[] = [
-  { id: "preview-1", type: "preview", title: "Preview" }
+  { id: "preview-1", type: "preview", title: "Preview" },
+  { id: "events-1", type: "events", title: "Events" }
 ];
 
 export function RightPanel({
+  events,
   previews,
   onCollapse,
   onRemovePreview
 }: {
+  events: AppState["events"];
   previews: PreviewService[];
   onCollapse: () => void;
   onRemovePreview: (preview: PreviewService) => Promise<void>;
@@ -35,6 +39,7 @@ export function RightPanel({
   const [tabs, setTabs] = useState<RightPanelTab[]>(initialRightTabs);
   const [activeTabId, setActiveTabId] = useState(initialRightTabs[0].id);
   const [newTabMenuOpen, setNewTabMenuOpen] = useState(false);
+  const previousPreviewIds = useRef(new Set<string>());
 
   const selectedPreview = useMemo(
     () => previews.find((preview) => preview.id === selectedPreviewId) ?? previews[0],
@@ -52,9 +57,27 @@ export function RightPanel({
     }
   }, [selectedPreviewId, previews]);
 
+  useEffect(() => {
+    const previousIds = previousPreviewIds.current;
+    const hasNewPreview = previews.some((preview) => !previousIds.has(preview.id));
+    previousPreviewIds.current = new Set(previews.map((preview) => preview.id));
+    if (!hasNewPreview) return;
+
+    setSelectedPreviewId(previews[0]?.id);
+    const previewTab = tabs.find((tab) => tab.type === "preview");
+    if (previewTab) {
+      setActiveTabId(previewTab.id);
+      return;
+    }
+
+    const id = `preview-${Date.now().toString(36)}`;
+    setTabs((current) => [...current, { id, type: "preview", title: "Preview" }]);
+    setActiveTabId(id);
+  }, [previews, tabs]);
+
   function addTab(type: RightPanelTab["type"]) {
     const id = `${type}-${Date.now().toString(36)}`;
-    const tab = { id, type, title: "Preview" };
+    const tab = { id, type, title: type === "preview" ? "Preview" : "Events" };
     setTabs((current) => [...current, tab]);
     setActiveTabId(id);
     setNewTabMenuOpen(false);
@@ -87,9 +110,9 @@ export function RightPanel({
                 role="tab"
                 aria-selected={tab.id === activeTab?.id}
               >
-                <Monitor size={14} />
+                {tab.type === "events" ? <FileJson size={14} /> : <Monitor size={14} />}
                 <span>{tab.title}</span>
-                <span className="right-tab-count">{previews.length}</span>
+                <span className="right-tab-count">{tab.type === "events" ? events.length : previews.length}</span>
               </button>
               <button type="button" className="right-tab-close" title="Close tab" onClick={() => closeTab(tab.id)}>
                 <X size={12} />
@@ -112,6 +135,10 @@ export function RightPanel({
                 <Monitor size={14} />
                 <span>Preview</span>
               </button>
+              <button type="button" onClick={() => addTab("events")}>
+                <FileJson size={14} />
+                <span>Events</span>
+              </button>
             </div>
           )}
           <button type="button" className="panel-icon-button" onClick={onCollapse} title="Collapse panel">
@@ -121,16 +148,40 @@ export function RightPanel({
       </div>
 
       <div className="right-panel-body">
-        <PreviewPane
-          previews={previews}
-          selectedPreview={selectedPreview}
-          previewRefreshKey={previewRefreshKey}
-          onSelectPreview={setSelectedPreviewId}
-          onRefreshPreview={() => setPreviewRefreshKey((key) => key + 1)}
-          onRemovePreview={onRemovePreview}
-        />
+        {activeTab?.type === "events" ? (
+          <EventLog events={events} />
+        ) : (
+          <PreviewPane
+            previews={previews}
+            selectedPreview={selectedPreview}
+            previewRefreshKey={previewRefreshKey}
+            onSelectPreview={setSelectedPreviewId}
+            onRefreshPreview={() => setPreviewRefreshKey((key) => key + 1)}
+            onRemovePreview={onRemovePreview}
+          />
+        )}
       </div>
     </aside>
+  );
+}
+
+function EventLog({ events }: { events: AppState["events"] }) {
+  return (
+    <section className="event-log-pane">
+      {events.length === 0 ? (
+        <p className="muted">No events.</p>
+      ) : (
+        events.map((event) => (
+          <article className={event.isError ? "json-event error" : "json-event"} key={event.id}>
+            <div>
+              <strong>{event.title}</strong>
+              <span>{new Date(event.createdAt).toLocaleTimeString()}</span>
+            </div>
+            {event.detail && <pre>{event.detail}</pre>}
+          </article>
+        ))
+      )}
+    </section>
   );
 }
 
@@ -216,4 +267,3 @@ function PreviewPane({
     </section>
   );
 }
-

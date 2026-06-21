@@ -18,6 +18,7 @@ import {
   errorStatus,
   isAddressInUse,
   isSecureRequest,
+  previewRequestHeaders,
   readBody,
   readJson,
   sendError,
@@ -25,7 +26,6 @@ import {
   sendProxyResponse,
   serveStatic
 } from "./http-utils.js";
-import { requestHeaders } from "./proxy-utils.js";
 import { ensureWorkspaceProjectPath, workspaceApiPath, workspacePreviewPath } from "./server-paths.js";
 import { TelegramChannel } from "./telegram-channel.js";
 import {
@@ -120,7 +120,7 @@ const server = createServer(async (req, res) => {
       const response = await bridge.fetchPreview(preview.previewId, {
         method: req.method ?? "GET",
         path: `${preview.upstreamPath}${url.search}`,
-        headers: requestHeaders(req.headers),
+        headers: previewRequestHeaders(req),
         body: body.length > 0 ? body : undefined
       });
       return sendProxyResponse(res, response.status, response.headers, req.method === "HEAD" ? undefined : response.body);

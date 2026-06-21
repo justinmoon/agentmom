@@ -75,11 +75,13 @@ export function AuthScreen({
           placeholder="Password"
           type="password"
         />
-        <input
-          value={inviteCode}
-          onChange={(event) => setInviteCode(event.target.value)}
-          placeholder="Access code"
-        />
+        {mode === "signup" && (
+          <input
+            value={inviteCode}
+            onChange={(event) => setInviteCode(event.target.value)}
+            placeholder="Access code"
+          />
+        )}
         {error && <div className="form-error">{error}</div>}
         <button type="submit" disabled={busy || !email.trim() || !password}>
           {busy ? "Working" : mode === "login" ? "Log in" : "Sign up"}

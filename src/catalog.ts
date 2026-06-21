@@ -17,6 +17,7 @@ const SHORT_CODE_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const SHORT_CODE_LENGTH = 4;
 const SHORT_CODE_SPACE = SHORT_CODE_ALPHABET.length ** SHORT_CODE_LENGTH;
 const SHORT_CODE_PATTERN = /^[a-z0-9]{4}$/;
+const ACCESS_CODE_LABEL = "Access code";
 const TELEGRAM_LINK_CODE_PATTERN = SHORT_CODE_PATTERN;
 
 export type CatalogUser = {
@@ -43,6 +44,7 @@ export type CatalogInvite = {
   id: string;
   code: string;
   label: string;
+  kind?: "invite" | "access";
   role: UserRole;
   usedCount: number;
   active: boolean;
@@ -182,6 +184,10 @@ function unusedShortCode(usedCodes: Set<string>, label: string): string {
 
 function unusedTelegramLinkCode(activeCodes: Set<string>): string {
   return unusedShortCode(activeCodes, "telegram link");
+}
+
+function isAccessInvite(invite: CatalogInvite): boolean {
+  return invite.kind === "access" || (invite.kind === undefined && invite.label === ACCESS_CODE_LABEL && invite.code.startsWith("mom-"));
 }
 
 function normalizeTelegramLinkCode(code: string): string {
@@ -526,6 +532,7 @@ export class CatalogStore {
       id: randomUUID(),
       code,
       label: input.label?.trim() || `${role} invite`,
+      kind: "invite",
       role,
       usedCount: 0,
       active: true,
@@ -556,8 +563,9 @@ export class CatalogStore {
   private createSharedAccessCodeInData(data: CatalogData, user: CatalogUser): CatalogInvite {
     const invite: CatalogInvite = {
       id: randomUUID(),
-      code: `mom-${base64url(12)}`,
-      label: "Access code",
+      code: unusedShortCode(new Set(data.invites.map((candidate) => candidate.code)), "access"),
+      label: ACCESS_CODE_LABEL,
+      kind: "access",
       role: "user",
       usedCount: 0,
       active: true,
@@ -572,8 +580,15 @@ export class CatalogStore {
   accessCode(user: CatalogUser): PublicInvite {
     if (user.role !== "admin") throw new Error("admin required");
     const data = this.read();
-    let invite = data.invites.find((candidate) => candidate.active);
+    let invite = data.invites.find((candidate) => candidate.active && candidate.kind === "access");
     if (!invite) {
+      const timestamp = now();
+      for (const candidate of data.invites) {
+        if (candidate.active && isAccessInvite(candidate)) {
+          candidate.active = false;
+          candidate.disabledAt = timestamp;
+        }
+      }
       invite = this.createSharedAccessCodeInData(data, user);
       this.write(data);
     }
@@ -586,7 +601,7 @@ export class CatalogStore {
     const data = this.read();
     const timestamp = now();
     for (const invite of data.invites) {
-      if (invite.active) {
+      if (invite.active && isAccessInvite(invite)) {
         invite.active = false;
         invite.disabledAt = timestamp;
       }

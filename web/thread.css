@@ -292,7 +292,8 @@
   padding-bottom: 2px;
 }
 
-.message-body .attachment-list {
+.bubble .attachment-list,
+.assistant-body .attachment-list {
   margin-top: 10px;
 }
 
@@ -305,9 +306,9 @@
   grid-template-columns: 48px minmax(0, 1fr);
   gap: 8px;
   align-items: center;
-  border: 1px solid #d8ddd5;
-  border-radius: 7px;
-  background: #fbfbf8;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
   padding: 6px 32px 6px 6px;
 }
 
@@ -322,10 +323,10 @@
   display: grid;
   place-items: center;
   overflow: hidden;
-  border: 1px solid #dce1d8;
+  border: 1px solid var(--line);
   border-radius: 6px;
-  background: #eef1ec;
-  color: #53605a;
+  background: var(--panel);
+  color: var(--muted);
 }
 
 .attachment-thumb img {
@@ -349,13 +350,13 @@
 }
 
 .attachment-meta span {
-  color: #28302c;
+  color: var(--text);
   font-size: 0.82rem;
   font-weight: 700;
 }
 
 .attachment-meta small {
-  color: #687069;
+  color: var(--dim);
   font-size: 0.74rem;
 }
 
@@ -367,15 +368,15 @@
   height: 26px;
   display: grid;
   place-items: center;
-  border: 1px solid #d6dbd1;
+  border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
-  color: #3d4942;
+  background: var(--panel);
+  color: var(--muted);
 }
 
 .attachment-remove:hover {
-  border-color: #9a776f;
-  color: #8d3c30;
+  border-color: var(--err);
+  color: var(--err);
 }
 
 .composer-error {
