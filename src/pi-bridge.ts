@@ -109,9 +109,16 @@ export class PiBridge {
   }
 
   async openSession(request: { kind: "continue" | "new" | "open"; path?: string }): Promise<AppState> {
+    if (this.isRunning) {
+      throw Object.assign(new Error("Wait for the current turn to finish or stop it before switching chats."), {
+        status: 409
+      });
+    }
+
     this.disposeCurrentSession();
     this.lastError = undefined;
     this.liveMessages.clear();
+    this.events = [];
 
     mkdirSync(this.config.agentDir, { recursive: true });
     mkdirSync(this.config.sessionDir, { recursive: true });

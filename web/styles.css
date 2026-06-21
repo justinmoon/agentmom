@@ -76,8 +76,12 @@ textarea {
   font: inherit;
 }
 
-button {
+button:not(:disabled) {
   cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
 }
 
 /* Serif headings — Fraunces carries the brand personality. */
@@ -321,20 +325,25 @@ code {
   box-shadow: var(--highlight);
 }
 
-.actions button:hover,
+.actions button:hover:not(:disabled),
 .actions a:hover,
-.session:hover {
+.session:hover:not(:disabled) {
   border-color: var(--line-strong);
   background: var(--panel-hover);
   box-shadow: var(--shadow-md), var(--highlight);
   transform: translateY(-1px);
 }
 
-.actions button:active,
+.actions button:active:not(:disabled),
 .actions a:active,
-.session:active {
+.session:active:not(:disabled) {
   transform: translateY(0);
   box-shadow: var(--shadow-sm), var(--highlight);
+}
+
+.actions button:disabled,
+.session:disabled {
+  opacity: 0.55;
 }
 
 .session.active {

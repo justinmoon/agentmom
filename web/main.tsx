@@ -202,20 +202,30 @@ function App() {
   }, [previewCount]);
 
   async function newSession() {
+    setError(undefined);
     const response = await fetch(workspaceUrl("/sessions"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ new: true })
     });
+    if (!response.ok) {
+      setError(await readResponseError(response));
+      return;
+    }
     setState((await response.json()) as AppState);
   }
 
   async function openSession(session: SessionSummary) {
+    setError(undefined);
     const response = await fetch(workspaceUrl("/sessions"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: session.path })
     });
+    if (!response.ok) {
+      setError(await readResponseError(response));
+      return;
+    }
     setState((await response.json()) as AppState);
   }
 
@@ -263,7 +273,7 @@ function App() {
           </div>
 
           <div className="actions">
-            <button type="button" onClick={newSession}>
+            <button type="button" disabled={state.isRunning} onClick={() => void newSession()}>
               <SquarePen size={16} />
               <span>New chat</span>
             </button>
@@ -295,6 +305,7 @@ function App() {
                   <button
                     type="button"
                     className={session.path === state.session?.path ? "session active" : "session"}
+                    disabled={state.isRunning}
                     key={session.path ?? session.id}
                     onClick={() => void openSession(session)}
                   >

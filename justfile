@@ -26,6 +26,9 @@ smoke-cli:
 smoke-web-search:
     nix develop -c npm run smoke:web-search
 
+smoke-session-switch:
+    nix develop -c npm run smoke:session-switch
+
 smoke-local:
     nix develop -c npm run smoke:local
 
