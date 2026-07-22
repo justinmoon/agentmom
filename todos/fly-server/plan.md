@@ -66,18 +66,23 @@ side enforces quotas + tiny machines).
    hosts, colmena, agenix, justfile fleet recipes) - the repo keeps
    only dev shell + Dockerfile. mom-stage-1 is then free to wipe.
 
-## Steps
+## Steps (cutover complete 2026-07-22)
 
-- [ ] Dockerfile + fly.toml + flyctl-in-image; config tweaks if any
-- [ ] Deployments v2 (fly apps via flyctl remote build, proxy, certs
-      via API, delete podman/container machinery)
-- [ ] Provision agentmom-web app/volume/secrets; seed data; verify on
-      fly.dev
-- [ ] E2E on Fly: login, turn, skills, preview, static + container
-      deploy
-- [ ] Cutover (telegram flip, DNS by user, checklist)
-- [ ] Repo cleanup: retire nix fleet machinery; update docs/plan
-- [ ] User: $50 billing alert in Fly dashboard
+- [x] Dockerfile + fly.toml; flyctl in image
+- [x] Deployments v2 shipped and E2E'd live (remote build, proxy,
+      autostop, removal). Static path + quota preserved.
+- [x] agentmom-web provisioned, seeded (final quiesced snapshot,
+      13 users), verified on fly.dev then on agentmom.xyz post-DNS
+      (TLS issued after AAAA records — Fly requires AAAA or ownership
+      TXT with shared v4; cert edge propagation takes ~2 min).
+- [x] Telegram live from Fly. Old server stopped (rollback: point DNS
+      back + systemctl start agentmom, until the box is wiped).
+- [x] Repo cleanup: nix reduced to a dev shell (flyctl replaces
+      colmena/agenix/podman); justfile deploy-prod = fly deploy.
+      nix/secrets kept as encrypted token backup.
+- [ ] User spot check: login + agent turn + telegram message
+- [ ] User: $50 billing alert in Fly dashboard (no API for this)
+- [ ] After spot check passes: all-clear to wipe mom-stage-1
 
 ## Implementation Notes
 

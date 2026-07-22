@@ -38,52 +38,22 @@ smoke-local:
 smoke-deploy:
     nix develop -c npm run smoke:deploy
 
-podman:
-    nix develop -c scripts/ensure-podman-machine.sh
-
 start:
     nix develop -c npm run start
 
-fleet-build-prod:
-    nix develop -c colmena build --on {{prod_host}}
-
-fleet-status-prod:
-    nix develop -c colmena exec --on {{prod_host}} -- systemctl --no-pager --failed
+deploy-prod:
+    fly deploy --remote-only --yes
+    just check-prod
 
 check-prod:
     #!/usr/bin/env bash
     set -euo pipefail
-
-    ssh {{prod_host}} 'bash -se' <<'REMOTE'
-    set -euo pipefail
-
-    for attempt in $(seq 1 60); do
-      health_json="$(curl -fsS http://127.0.0.1:7392/api/health || true)"
-      if [[ "${health_json}" == *'"ok":true'* ]]; then
-        echo "${health_json}"
-        break
-      fi
-      if [[ "${attempt}" == "60" ]]; then
-        echo "agentmom health check failed" >&2
-        [[ -n "${health_json}" ]] && echo "${health_json}" >&2
-        systemctl status agentmom --no-pager -n 80 >&2 || true
-        exit 1
-      fi
-      sleep 1
-    done
-
-    me_status="$(curl -sS -o /tmp/agentmom-deploy-me.json -w '%{http_code}' http://127.0.0.1:7392/api/me)"
-    if [[ "${me_status}" != "401" ]]; then
-      echo "expected unauthenticated /api/me to return 401, got ${me_status}" >&2
-      cat /tmp/agentmom-deploy-me.json >&2
-      exit 1
-    fi
-    grep -q '"authEnabled":true' /tmp/agentmom-deploy-me.json
-
+    health="$(curl -fsS --max-time 20 https://agentmom.xyz/api/health)"
+    echo "$health"
+    [[ "$health" == *'"ok":true'* ]]
+    me_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://agentmom.xyz/api/me)"
+    [[ "$me_status" == "401" ]]
     echo "prod check ok"
-    REMOTE
 
-deploy-prod:
-    nix develop -c colmena apply --on {{prod_host}}
-    nix develop -c colmena exec --on {{prod_host}} -- sudo systemctl restart agentmom
-    just check-prod
+logs-prod:
+    fly logs -a agentmom-web
