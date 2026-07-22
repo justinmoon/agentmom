@@ -44,7 +44,7 @@ buildNpmPackage {
     runHook preInstall
 
     mkdir -p "$out/share/agentmom" "$out/bin"
-    cp -R dist src package.json package-lock.json node_modules "$out/share/agentmom/"
+    cp -R dist src scripts package.json package-lock.json node_modules "$out/share/agentmom/"
 
     makeWrapper ${nodejs_24}/bin/node "$out/bin/agentmom" \
       --set NODE_ENV production \
