@@ -18,4 +18,5 @@ let
 in
 {
   "nix/secrets/secrets.age".publicKeys = allKeys;
+  "nix/secrets/fly-api-token.age".publicKeys = allKeys;
 }

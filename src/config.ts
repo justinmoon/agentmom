@@ -8,7 +8,7 @@ export type AppConfig = {
   authEnabled: boolean;
   host: string;
   port: number;
-  executor: "local" | "smolvm";
+  executor: "local" | "smolvm" | "fly";
   stateDir: string;
   workspace: string;
   workspaceId?: string;
@@ -32,6 +32,18 @@ export type AppConfig = {
   rootDir: string;
   podman: {
     command: string;
+  };
+  fly: {
+    token: string;
+    org: string;
+    region: string;
+    image: string;
+    cpus: number;
+    memoryMb: number;
+    volumeGb: number;
+    idleMinutes: number;
+    appPrefix: string;
+    shimUrl: string;
   };
   deploy: {
     memoryMb: number;
@@ -154,6 +166,23 @@ function requireServiceSecrets(config: {
   throw new Error(`Missing required app secrets (${missing.join(", ")}); checked ${sourceHint}`);
 }
 
+function executorFromEnv(): "local" | "smolvm" | "fly" {
+  const raw = process.env.AGENTMOM_EXECUTOR;
+  if (raw === "local") return "local";
+  if (raw === "fly") return "fly";
+  return "smolvm";
+}
+
+function flyToken(): string {
+  const direct = process.env.AGENTMOM_FLY_API_TOKEN?.trim();
+  if (direct) return direct;
+  const tokenFile = process.env.AGENTMOM_FLY_API_TOKEN_FILE?.trim();
+  if (tokenFile && existsSync(tokenFile)) {
+    return readFileSync(tokenFile, "utf8").trim();
+  }
+  return "";
+}
+
 export function loadConfig(options: LoadConfigOptions = {}): AppConfig {
   const workspace = resolve(process.env.AGENTMOM_WORKSPACE ?? process.cwd());
   const workspaceRoot = resolve(process.env.AGENTMOM_WORKSPACE_ROOT ?? `${workspace}/workspaces`);
@@ -191,7 +220,7 @@ export function loadConfig(options: LoadConfigOptions = {}): AppConfig {
     authEnabled: boolFromEnv("AGENTMOM_AUTH_ENABLED", process.env.NODE_ENV === "production"),
     host: process.env.AGENTMOM_HOST ?? "127.0.0.1",
     port: numberFromEnv("AGENTMOM_PORT", 7392),
-    executor: process.env.AGENTMOM_EXECUTOR === "local" ? "local" : "smolvm",
+    executor: executorFromEnv(),
     stateDir,
     workspace,
     workspaceRoot,
@@ -220,6 +249,22 @@ export function loadConfig(options: LoadConfigOptions = {}): AppConfig {
     },
     podman: {
       command: process.env.AGENTMOM_PODMAN_COMMAND ?? "podman"
+    },
+    fly: {
+      token: flyToken(),
+      org: process.env.AGENTMOM_FLY_ORG ?? "personal",
+      region: process.env.AGENTMOM_FLY_REGION ?? "arn",
+      image: process.env.AGENTMOM_FLY_IMAGE ?? "docker.io/library/node:24-bookworm",
+      cpus: numberFromEnv("AGENTMOM_FLY_CPUS", 2),
+      memoryMb: numberFromEnv("AGENTMOM_FLY_MEMORY_MB", 2048),
+      volumeGb: numberFromEnv("AGENTMOM_FLY_VOLUME_GB", 10),
+      idleMinutes: numberFromEnv("AGENTMOM_FLY_IDLE_MINUTES", 10),
+      appPrefix: process.env.AGENTMOM_FLY_APP_PREFIX ?? "am-ws-",
+      shimUrl:
+        process.env.AGENTMOM_FLY_SHIM_URL ??
+        (domainFromEnv("AGENTMOM_DEPLOYMENT_BASE_DOMAIN")
+          ? `https://${domainFromEnv("AGENTMOM_DEPLOYMENT_BASE_DOMAIN")}/api/sandbox-shim`
+          : "")
     },
     smolvm: {
       command: process.env.AGENTMOM_SMOLVM_COMMAND ?? "smolvm",

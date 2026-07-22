@@ -76,9 +76,11 @@ export function userMessageAttachments(message: UserMessage): MessageAttachment[
 }
 
 function agentVisiblePath(config: AppConfig, hostPath: string): string {
+  const guestWorkspace =
+    config.executor === "smolvm" ? config.smolvm.guestWorkspace : config.executor === "fly" ? "/workspace" : undefined;
   const projectRelative = relative(resolve(config.projectsDir), hostPath);
-  if (config.executor === "smolvm" && projectRelative && !projectRelative.startsWith("..") && !isAbsolute(projectRelative)) {
-    return posix.join(config.smolvm.guestWorkspace.replace(/\/+$/, ""), projectRelative.split(sep).join("/"));
+  if (guestWorkspace && projectRelative && !projectRelative.startsWith("..") && !isAbsolute(projectRelative)) {
+    return posix.join(guestWorkspace.replace(/\/+$/, ""), projectRelative.split(sep).join("/"));
   }
   return hostPath;
 }

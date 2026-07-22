@@ -107,7 +107,7 @@ export type PreviewService = {
   id: string;
   name: string;
   port: number;
-  runtime: "local" | "smolvm";
+  runtime: "local" | "smolvm" | "fly";
   path: string;
   createdAt: string;
   updatedAt: string;
@@ -177,7 +177,7 @@ export type AppState = {
   tools: string[];
   error?: string;
   runtime: {
-    executor: "local" | "smolvm";
+    executor: "local" | "smolvm" | "fly";
     guestWorkspace?: string;
     vm?: {
       name: string;

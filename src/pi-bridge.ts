@@ -8,7 +8,10 @@ import {
   AuthStorage,
   createAgentSession,
   createBashToolDefinition,
+  createEditToolDefinition,
   createLocalBashOperations,
+  createReadToolDefinition,
+  createWriteToolDefinition,
   DefaultResourceLoader,
   ModelRegistry,
   SessionManager,
@@ -35,6 +38,7 @@ import {
   userMessageAttachments
 } from "./message-attachments.js";
 import { ensureSkillRoots, skillRoots, toSkillSummary } from "./skills.js";
+import { FlySandbox } from "./fly-machines.js";
 import { SmolvmRuntime } from "./smolvm.js";
 import { allocatePort } from "./process-utils.js";
 import type { AppState, ChatMessage, MessageAttachment, SessionSummary, SkillSummary, UiEvent } from "./types.js";
@@ -56,6 +60,10 @@ export class PiBridge {
   private events: UiEvent[] = [];
   private listeners = new Set<StateListener>();
   private smolvm?: SmolvmRuntime;
+  private fly?: FlySandbox;
+  private flyCliPushed = false;
+  private flyIdleTimer?: NodeJS.Timeout;
+  private lastMirrorPullMs = 0;
   private previewProcesses = new Set<ChildProcess>();
   private sessionSummaries: SessionSummary[] = [];
   private autoPreviewServers = new Map<string, HttpServer>();
@@ -223,9 +231,15 @@ export class PiBridge {
     if (!this.session) throw new Error("Pi session was not created");
     if (this.isRunning) throw new Error("A Pi turn is already running");
 
+    if (this.config.executor === "fly") {
+      // Boot the sandbox now so it overlaps the LLM call.
+      void this.ensureFlyReady().catch(() => {});
+    }
+
     const savedAttachments = saveMessageAttachments(this.config, attachments);
     const images = attachmentImages(savedAttachments);
     const promptText = messagePromptText(text, savedAttachments);
+    await this.pushAttachmentsToSandbox(savedAttachments);
 
     this.isRunning = true;
     this.lastError = undefined;
@@ -348,6 +362,7 @@ export class PiBridge {
 
   dispose(): void {
     clearTimeout(this.skillReloadTimer);
+    clearInterval(this.flyIdleTimer);
     for (const watcher of this.skillWatchers) watcher.close();
     this.skillWatchers = [];
     this.disposeCurrentSession();
@@ -372,6 +387,9 @@ export class PiBridge {
     if (this.config.executor === "smolvm") {
       return `${this.config.smolvm.guestWorkspace.replace(/\/+$/, "")}/.pi/skills`;
     }
+    if (this.config.executor === "fly") {
+      return "/workspace/.pi/skills";
+    }
     return join(this.config.agentCwd, ".pi", "skills");
   }
 
@@ -383,9 +401,7 @@ export class PiBridge {
     } else if (event.type === "agent_end") {
       this.addEvent("agent", event.willRetry ? "Turn ended; retry pending" : "Turn ended");
       if (!event.willRetry) {
-        void this.maybeAutoServePreview(this.lastTurnStartedAt);
-        // Guest writes through the VM mount may not surface fs.watch events on the host.
-        this.scheduleSkillReload();
+        void this.afterTurnSync();
       }
     } else if (event.type === "message_start" || event.type === "message_update" || event.type === "message_end") {
       const message = event.message;
@@ -447,7 +463,12 @@ export class PiBridge {
       error: this.lastError,
       runtime: {
         executor: this.config.executor,
-        guestWorkspace: this.config.executor === "smolvm" ? this.config.smolvm.guestWorkspace : undefined,
+        guestWorkspace:
+          this.config.executor === "smolvm"
+            ? this.config.smolvm.guestWorkspace
+            : this.config.executor === "fly"
+              ? "/workspace"
+              : undefined,
         vm: this.smolvm?.snapshot()
           ? {
               name: this.smolvm.snapshot()!.name,
@@ -469,7 +490,20 @@ export class PiBridge {
   private async prepareCustomTools(guestBinDir: string): Promise<ToolDefinition[]> {
     let operations: BashOperations;
 
-    if (this.config.executor === "smolvm") {
+    if (this.config.executor === "fly") {
+      const fly = this.getFly();
+      this.addEvent("runtime", "Fly sandbox", fly.appName);
+      // Don't block session open on the machine boot: bash calls await
+      // readiness themselves, and messages trigger a warm-up in parallel.
+      void this.ensureFlyReady().catch(() => {});
+      const baseExec = fly.createBashExec();
+      operations = {
+        exec: async (command, cwd, options) => {
+          await this.ensureFlyReady();
+          return baseExec(command, cwd, options);
+        }
+      };
+    } else if (this.config.executor === "smolvm") {
       this.smolvm ??= new SmolvmRuntime(this.config);
       this.addEvent("runtime", "Starting smolvm", this.config.smolvm.name);
       this.emit();
@@ -493,8 +527,119 @@ export class PiBridge {
       createBashToolDefinition(this.config.agentCwd, {
         commandPrefix,
         operations: this.withPreviewRegistration(operations)
+      }) as unknown as ToolDefinition,
+      ...this.flyFileTools()
+    ];
+  }
+
+  /**
+   * With the fly executor, the machine's volume is the single source of truth
+   * for files: pi's read/write/edit run against the sandbox (custom tools
+   * override built-ins by name), keeping bash and the file tools coherent
+   * mid-turn.
+   */
+  private flyFileTools(): ToolDefinition[] {
+    if (this.config.executor !== "fly") return [];
+    const fly = this.getFly();
+    const toGuest = (path: string) => fly.hostToGuest(path) ?? path;
+    const readOps = {
+      readFile: async (path: string) => {
+        await this.ensureFlyReady();
+        return fly.readFile(toGuest(path));
+      },
+      access: async (path: string) => {
+        await this.ensureFlyReady();
+        await fly.access(toGuest(path));
+      }
+    };
+    const writeOps = {
+      writeFile: async (path: string, content: string) => {
+        await this.ensureFlyReady();
+        await fly.writeFile(toGuest(path), content);
+      },
+      mkdir: async (path: string) => {
+        await this.ensureFlyReady();
+        await fly.mkdir(toGuest(path));
+      }
+    };
+    return [
+      createReadToolDefinition(fly.guestWorkspace, { operations: readOps }) as unknown as ToolDefinition,
+      createWriteToolDefinition(fly.guestWorkspace, { operations: writeOps }) as unknown as ToolDefinition,
+      createEditToolDefinition(fly.guestWorkspace, {
+        operations: { ...readOps, writeFile: writeOps.writeFile }
       }) as unknown as ToolDefinition
     ];
+  }
+
+  private getFly(): FlySandbox {
+    this.fly ??= new FlySandbox(this.config);
+    return this.fly;
+  }
+
+  /** Machine started, shim healthy, mom CLI present, idle stopper armed. */
+  private async ensureFlyReady(): Promise<void> {
+    const fly = this.getFly();
+    await fly.ensureStarted();
+    if (!this.flyCliPushed) {
+      const { hostBinDir } = this.previews.cliInstall();
+      await fly.pushDir(hostBinDir, "/workspace/.agentmom/bin");
+      this.flyCliPushed = true;
+    }
+    this.flyIdleTimer ??= setInterval(() => {
+      void this.stopFlyIfIdle();
+    }, 60_000);
+    this.flyIdleTimer.unref?.();
+  }
+
+  private async stopFlyIfIdle(): Promise<void> {
+    const fly = this.fly;
+    if (!fly || this.isRunning || !fly.up) return;
+    if (fly.idleMs() < this.config.fly.idleMinutes * 60_000) return;
+    await fly.stop();
+    this.addEvent("runtime", "Sandbox suspended", `idle for ${this.config.fly.idleMinutes}m; wakes on next use`);
+    this.emit();
+  }
+
+  private async pushAttachmentsToSandbox(attachments: { path: string; dataBase64: string }[]): Promise<void> {
+    if (this.config.executor !== "fly" || attachments.length === 0) return;
+    const fly = this.getFly();
+    for (const attachment of attachments) {
+      const guestPath = fly.hostToGuest(attachment.path);
+      if (guestPath) {
+        await fly.writeFile(guestPath, Buffer.from(attachment.dataBase64, "base64"));
+      }
+    }
+  }
+
+  /** After each turn: refresh the host mirror, then run mirror-dependent work. */
+  private async afterTurnSync(): Promise<void> {
+    if (this.config.executor === "fly" && this.fly?.up) {
+      const pullStartedAt = Date.now();
+      try {
+        // 60s of overlap absorbs clock skew between host and machine.
+        await this.fly.pullDir("/workspace", this.config.projectsDir, Math.max(0, this.lastMirrorPullMs - 60_000));
+        this.lastMirrorPullMs = pullStartedAt;
+      } catch (error) {
+        this.addEvent("runtime", "Mirror sync failed", error instanceof Error ? error.message : String(error), true);
+      }
+    }
+    void this.maybeAutoServePreview(this.lastTurnStartedAt);
+    // Guest writes may not surface fs.watch events on the host.
+    this.scheduleSkillReload();
+  }
+
+  /** Push the host project skills dir into the sandbox after UI edits. */
+  async syncProjectSkillsToSandbox(): Promise<void> {
+    if (this.config.executor !== "fly") return;
+    const fly = this.getFly();
+    const hostSkills = join(this.config.agentCwd, ".pi", "skills");
+    if (!existsSync(hostSkills)) return;
+    await fly.ensureStarted();
+    const baseExec = fly.createBashExec();
+    await baseExec("rm -rf /workspace/.pi/skills && mkdir -p /workspace/.pi/skills", fly.guestWorkspace, {
+      onData: () => {}
+    });
+    await fly.pushDir(hostSkills, "/workspace/.pi/skills");
   }
 
   private withPreviewRegistration(operations: BashOperations): BashOperations {
@@ -576,7 +721,10 @@ export class PiBridge {
     if (!registration.command) return;
 
     const cwd = this.resolveAgentPath(registration.cwd ?? this.config.agentCwd);
-    if (this.config.executor === "smolvm") {
+    if (this.config.executor === "fly") {
+      const fly = this.getFly();
+      await fly.spawnDetached(registration.command, fly.hostToGuest(cwd) ?? fly.guestWorkspace);
+    } else if (this.config.executor === "smolvm") {
       this.smolvm ??= new SmolvmRuntime(this.config);
       await this.smolvm.startProcess(registration.command, cwd);
     } else {
@@ -673,6 +821,11 @@ export class PiBridge {
       }
 
       const projectPath = this.resolveAgentPath(registration.cwd);
+      if (this.config.executor === "fly") {
+        const fly = this.getFly();
+        const guestPath = fly.hostToGuest(projectPath);
+        if (guestPath) await fly.pullDir(guestPath, projectPath);
+      }
       const deployment = await this.deployments.publish({
         path: projectPath,
         slug: registration.slug,
@@ -698,12 +851,15 @@ export class PiBridge {
     const trimmed = path.trim();
     if (!trimmed) throw new Error("Path is required");
 
-    if (this.config.executor === "smolvm") {
-      const guestWorkspace = this.config.smolvm.guestWorkspace.replace(/\/+$/, "");
-      if (trimmed === guestWorkspace || trimmed.startsWith(`${guestWorkspace}/`)) {
-        const relativePath = trimmed.slice(guestWorkspace.length).replace(/^\/+/, "");
-        return this.ensureProjectPath(resolve(this.config.projectsDir, relativePath));
-      }
+    const guestWorkspace =
+      this.config.executor === "smolvm"
+        ? this.config.smolvm.guestWorkspace.replace(/\/+$/, "")
+        : this.config.executor === "fly"
+          ? "/workspace"
+          : undefined;
+    if (guestWorkspace && (trimmed === guestWorkspace || trimmed.startsWith(`${guestWorkspace}/`))) {
+      const relativePath = trimmed.slice(guestWorkspace.length).replace(/^\/+/, "");
+      return this.ensureProjectPath(resolve(this.config.projectsDir, relativePath));
     }
 
     if (!isAbsolute(trimmed)) {
@@ -722,6 +878,9 @@ export class PiBridge {
   }
 
   private async fetchPreviewFromGuest(port: number, request: PreviewFetchRequest): Promise<PreviewFetchResponse> {
+    if (this.config.executor === "fly") {
+      return this.getFly().proxy(port, request);
+    }
     this.smolvm ??= new SmolvmRuntime(this.config);
     return this.smolvm.fetchHttp(port, request);
   }

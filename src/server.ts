@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import {
@@ -125,6 +126,12 @@ const server = createServer(async (req, res) => {
         body: body.length > 0 ? body : undefined
       });
       return sendProxyResponse(res, response.status, response.headers, req.method === "HEAD" ? undefined : response.body);
+    }
+
+    if (url.pathname === "/api/sandbox-shim" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" });
+      res.end(readFileSync(resolve(config.rootDir, "src", "sandbox-shim.mjs"), "utf8"));
+      return;
     }
 
     if (url.pathname === "/api/health") {
@@ -413,12 +420,14 @@ async function handleWorkspaceRoute(
   if (rest === "/skills" && req.method === "POST") {
     const body = await readJson(req);
     createSkill(runtime.config, String(body?.name ?? ""));
+    await bridge.syncProjectSkillsToSandbox();
     return sendJson(res, await bridge.refreshSkills());
   }
 
   if (rest === "/skills" && req.method === "DELETE") {
     const baseDir = url.searchParams.get("baseDir") ?? "";
     deleteSkill(runtime.config, baseDir);
+    await bridge.syncProjectSkillsToSandbox();
     return sendJson(res, await bridge.refreshSkills());
   }
 
@@ -438,6 +447,7 @@ async function handleWorkspaceRoute(
       return sendJson(res, { error: "path and content are required" }, 400);
     }
     writeSkillFile(runtime.config, body.path, body.content);
+    await bridge.syncProjectSkillsToSandbox();
     return sendJson(res, await bridge.refreshSkills());
   }
 

@@ -51,6 +51,14 @@
     group = "root";
     mode = "0400";
   };
+  age.secrets.fly-api-token = {
+    file = ../../secrets/fly-api-token.age;
+    owner = "root";
+    group = "root";
+    mode = "0400";
+  };
+
+  services.agentmomWeb.flyTokenFile = config.age.secrets.fly-api-token.path;
 
   # 62G host: keep per-workspace VM ceilings well below physical memory.
   services.agentmomWeb.smolvm.memoryMb = 4096;

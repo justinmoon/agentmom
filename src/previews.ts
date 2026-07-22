@@ -114,9 +114,9 @@ export class PreviewManager {
     }
 
     const response =
-      service.runtime === "smolvm"
-        ? await this.fetchGuest(service, request)
-        : await fetchLocal(service, request);
+      service.runtime === "local"
+        ? await fetchLocal(service, request)
+        : await this.fetchGuest(service, request);
 
     return rewritePreviewResponse(service, response);
   }
@@ -154,7 +154,9 @@ export class PreviewManager {
     const guestBinDir =
       this.config.executor === "smolvm"
         ? pathPosix.join(this.config.smolvm.guestWorkspace, ".agentmom", "bin")
-        : hostBinDir;
+        : this.config.executor === "fly"
+          ? "/workspace/.agentmom/bin"
+          : hostBinDir;
 
     return { hostBinDir, guestBinDir };
   }

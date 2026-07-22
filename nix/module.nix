@@ -21,6 +21,9 @@ let
     ${lib.optionalString (cfg.envFile != null) ''
       export AGENTMOM_ENV_FILE="$CREDENTIALS_DIRECTORY/app-env"
     ''}
+    ${lib.optionalString (cfg.flyTokenFile != null) ''
+      export AGENTMOM_FLY_API_TOKEN_FILE="$CREDENTIALS_DIRECTORY/fly-token"
+    ''}
     exec ${lib.getExe cfg.package}
   '';
   uidmapWrappers = pkgs.runCommand "agentmom-uidmap-wrappers" { } ''
@@ -79,6 +82,18 @@ in
       type = lib.types.path;
       default = "${cfg.stateDir}/workspace";
       description = "Workspace root mounted into the agent runtime.";
+    };
+
+    executor = lib.mkOption {
+      type = lib.types.enum [ "local" "smolvm" "fly" ];
+      default = "smolvm";
+      description = "Sandbox executor for agent commands.";
+    };
+
+    flyTokenFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "File containing the Fly.io org token for the fly executor.";
     };
 
     envFile = lib.mkOption {
@@ -235,7 +250,7 @@ in
           {
             AGENTMOM_AGENT_DIR = "${cfg.stateDir}/app/pi";
             AGENTMOM_AUTH_ENABLED = if cfg.authEnabled then "1" else "0";
-            AGENTMOM_EXECUTOR = "smolvm";
+            AGENTMOM_EXECUTOR = cfg.executor;
             AGENTMOM_HOST = cfg.host;
             AGENTMOM_OPENROUTER_MODEL = cfg.model;
             AGENTMOM_THINKING_LEVEL = cfg.thinkingLevel;
@@ -273,8 +288,10 @@ in
             User = cfg.user;
             WorkingDirectory = cfg.workspaceDir;
           }
-          // lib.optionalAttrs (cfg.envFile != null) {
-            LoadCredential = [ "app-env:${toString cfg.envFile}" ];
+          // lib.optionalAttrs (cfg.envFile != null || cfg.flyTokenFile != null) {
+            LoadCredential =
+              lib.optional (cfg.envFile != null) "app-env:${toString cfg.envFile}"
+              ++ lib.optional (cfg.flyTokenFile != null) "fly-token:${toString cfg.flyTokenFile}";
           };
       };
     }
