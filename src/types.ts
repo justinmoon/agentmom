@@ -121,20 +121,18 @@ export type DeploymentRecord = {
   projectPath: string;
   /** Older records predate this field; undefined means "container". */
   kind?: "container" | "static";
-  image: string;
-  container: string;
+  /** Fly app serving this deployment (container deployments only). */
+  flyApp?: string;
   containerPort: number;
-  hostPort: number;
   /** Directory the deployed files are served from (static deployments only). */
   staticDir?: string;
   urlPath: string;
   url?: string;
   urlHost?: string;
-  status: "building" | "running" | "suspended" | "failed" | "stopped";
+  status: "building" | "running" | "failed" | "stopped";
   createdAt: string;
   updatedAt: string;
   lastDeployAt?: string;
-  lastRequestAt?: string;
   error?: string;
   buildLog?: string;
 };

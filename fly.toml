@@ -1,0 +1,31 @@
+# Agent Mom server — the control plane. Always-on (telegram long-polls,
+# users chat); user code never runs here.
+app = "agentmom-web"
+primary_region = "arn"
+
+[build]
+
+[env]
+  AGENTMOM_HOST = "0.0.0.0"
+  AGENTMOM_PORT = "7392"
+  AGENTMOM_AUTH_ENABLED = "1"
+  AGENTMOM_EXECUTOR = "fly"
+  AGENTMOM_STATE_DIR = "/data/app"
+  AGENTMOM_WORKSPACE = "/data/workspace"
+  AGENTMOM_DEPLOYMENT_BASE_DOMAIN = "agentmom.xyz"
+  AGENTMOM_FLY_SERVER_APP = "agentmom-web"
+
+[mounts]
+  source = "data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 7392
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"

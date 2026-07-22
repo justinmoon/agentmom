@@ -2,7 +2,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmS
 import { basename, extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import type { AppConfig } from "./config.js";
 import { isReservedDeploymentSlug, type DeploymentRouteMode, slugify } from "./deployment-routing.js";
-import { allocatePort, releasePort, reservePort, runCommand, sleep, truncateLog } from "./process-utils.js";
+import { runCommand, truncateLog } from "./process-utils.js";
 import type { DeploymentRecord } from "./types.js";
 import type { PreviewFetchRequest, PreviewFetchResponse } from "./previews.js";
 import {
@@ -34,38 +34,35 @@ const MAX_STATIC_BYTES = 256 * 1024 * 1024;
 const MAX_STATIC_FILES = 20_000;
 const STATIC_SKIPPED_DIRS = new Set(["node_modules", ".git"]);
 const STATIC_ROOT_CANDIDATES = [".", "dist", "build", "out", "public", "_site"];
-const IDLE_SWEEP_INTERVAL_MS = 60_000;
+const MACHINES_API = "https://api.machines.dev/v1";
+const GRAPHQL_API = "https://api.fly.io/graphql";
 
+/**
+ * User deployments. Static sites are files on the server's disk (zero
+ * execution). Container apps are Fly apps (`am-dep-<slug>`) built remotely
+ * and scaled to zero by fly-proxy — no user code ever runs on this server.
+ */
 export class DeploymentManager {
   private readonly statePath: string;
   private readonly deploymentDir: string;
   private readonly locks = new Map<string, Promise<void>>();
-  private readonly lastActivity = new Map<string, number>();
 
   constructor(private readonly config: AppConfig) {
     this.deploymentDir = this.config.deploymentDir;
     this.statePath = join(this.deploymentDir, "deployments.json");
     mkdirSync(this.deploymentDir, { recursive: true });
-    for (const deployment of this.readState().deployments) {
-      if (deploymentKind(deployment) === "container") reservePort(deployment.hostPort);
-    }
-    if (this.config.deploy.idleMinutes > 0) {
-      setInterval(() => {
-        void this.sweepIdle().catch(() => {});
-      }, IDLE_SWEEP_INTERVAL_MS).unref();
-    }
   }
 
   async list(scope: DeploymentScope = {}): Promise<DeploymentRecord[]> {
-    const deployments = await Promise.all(this.readState().deployments.map((entry) => this.reconcile(entry)));
-    return deployments
+    return this.readState()
+      .deployments.map((entry) => this.decorate(entry))
       .filter((deployment) => this.matchesScope(deployment, scope))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
   async isRoutable(slug: string): Promise<boolean> {
-    const deployment = await this.find(slug);
-    return deployment?.status === "running" || deployment?.status === "suspended";
+    const deployment = this.find(slug);
+    return deployment?.status === "running";
   }
 
   async publish(input: PublishDeploymentInput): Promise<DeploymentRecord> {
@@ -96,17 +93,20 @@ export class DeploymentManager {
       return this.withLock(slug, () => this.publishStaticUnlocked({ ...shared, staticRoot }));
     }
 
+    if (!this.config.fly.token) {
+      throw new Error("Container deployments are unavailable: no Fly token configured");
+    }
     const containerPort = input.port ?? 3000;
     if (!Number.isInteger(containerPort) || containerPort < 1 || containerPort > 65535) {
       throw new Error(`Invalid container port: ${input.port}`);
     }
 
-    return this.withLock(slug, () => this.publishUnlocked({ ...shared, containerPort }));
+    return this.withLock(slug, () => this.publishFlyUnlocked({ ...shared, containerPort }));
   }
 
   /**
-   * A static root is used when explicitly requested via --static, or when the project
-   * has no Dockerfile but a conventional directory containing index.html.
+   * A static root is used when explicitly requested via --static, or when the
+   * project has no Dockerfile but a conventional directory with index.html.
    */
   private resolveStaticRoot(projectPath: string, staticDir: string | undefined): string | undefined {
     if (staticDir !== undefined) {
@@ -142,7 +142,7 @@ export class DeploymentManager {
   }
 
   private async claimSlug(slug: string, scope: DeploymentScope): Promise<DeploymentRecord | undefined> {
-    let existing = await this.find(slug);
+    let existing = this.find(slug);
     if (existing && scope.workspaceId && !existing.workspaceId) {
       if (this.matchesScope(existing, scope)) {
         existing = { ...existing, workspaceId: scope.workspaceId };
@@ -185,10 +185,7 @@ export class DeploymentManager {
       name: input.displayName,
       projectPath: input.projectPath,
       kind: "static",
-      image: "",
-      container: "",
       containerPort: 0,
-      hostPort: 0,
       staticDir: destDir,
       urlPath: `/deploy/${input.slug}/`,
       status: "running",
@@ -198,11 +195,12 @@ export class DeploymentManager {
     };
     deployment = this.decorate(deployment);
     this.upsert(deployment);
-    await this.removeArtifacts(existing);
+    await this.removeArtifacts(existing, deployment);
+    await this.ensureCertificate(input.slug);
     return deployment;
   }
 
-  private async publishUnlocked(input: {
+  private async publishFlyUnlocked(input: {
     projectPath: string;
     slug: string;
     containerPort: number;
@@ -215,12 +213,8 @@ export class DeploymentManager {
       workspaceId: input.workspaceId,
       workspaceDirName: input.workspaceDirName
     });
-    const hostPort = await allocatePort();
-    reservePort(hostPort);
-    const version = Date.now().toString(36);
-    const image = `localhost/agentmom/${input.slug}:${version}`;
-    const container = `agentmom-${input.slug}-${version}`;
 
+    const flyApp = `${this.config.fly.deployAppPrefix}${input.slug}`;
     let deployment: DeploymentRecord = {
       id: existing?.id ?? input.slug,
       workspaceId: input.workspaceId,
@@ -228,10 +222,8 @@ export class DeploymentManager {
       name: input.displayName,
       projectPath: input.projectPath,
       kind: "container",
-      image,
-      container,
+      flyApp,
       containerPort: input.containerPort,
-      hostPort,
       urlPath: `/deploy/${input.slug}/`,
       status: "building",
       createdAt: existing?.createdAt ?? now,
@@ -242,85 +234,58 @@ export class DeploymentManager {
       this.upsert(deployment);
     }
 
+    const configPath = join(input.projectPath, ".agentmom-deploy.fly.toml");
     try {
-      const build = await runCommand(this.config.podman.command, ["build", "-t", image, "."], { cwd: input.projectPath });
-      deployment = {
-        ...deployment,
-        buildLog: truncateLog(build.output),
-        updatedAt: new Date().toISOString()
-      };
-      if (existing?.status !== "running") {
-        this.upsert(deployment);
-      }
+      await this.machinesApi("POST", "/apps", { app_name: flyApp, org_slug: this.config.fly.org }).catch((error) => {
+        if (!/taken|exists/i.test(String(error))) throw error;
+      });
 
-      const run = await runCommand(this.config.podman.command, [
-        "run",
-        "-d",
-        "--name",
-        container,
-        "--log-driver",
-        "k8s-file",
-        "--memory",
-        `${this.config.deploy.memoryMb}m`,
-        "--cpus",
-        String(this.config.deploy.cpus),
-        "--pids-limit",
-        String(this.config.deploy.pidsLimit),
-        "--restart",
-        "on-failure:3",
-        "--label",
-        `agentmom.deployment=${input.slug}`,
-        "--label",
-        `agentmom.version=${version}`,
-        "-e",
-        `PORT=${input.containerPort}`,
-        "-p",
-        `127.0.0.1:${hostPort}:${input.containerPort}`,
-        image
-      ]);
-      await this.waitUntilReady(hostPort, container);
+      writeFileSync(configPath, deploymentFlyToml(flyApp, this.config.fly.region, input.containerPort), "utf8");
+      const deployResult = await runCommand(
+        this.config.fly.flyctl,
+        ["deploy", "--app", flyApp, "--config", configPath, "--remote-only", "--yes", "--vm-size", "shared-cpu-1x", "--vm-memory", "256"],
+        {
+          cwd: input.projectPath,
+          env: { FLY_API_TOKEN: this.config.fly.token, FLY_NO_UPDATE_CHECK: "1" }
+        }
+      );
 
       deployment = {
         ...deployment,
         status: "running",
         error: undefined,
-        buildLog: truncateLog(`${deployment.buildLog ?? ""}\n${run.output}`.trim()),
+        buildLog: truncateLog(deployResult.output),
         updatedAt: new Date().toISOString()
       };
       deployment = this.decorate(deployment);
       this.upsert(deployment);
-      this.lastActivity.set(deployment.slug, Date.now());
-      await this.removeArtifacts(existing);
+      await this.removeArtifacts(existing, deployment);
+      await this.ensureCertificate(input.slug);
       return deployment;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.removeContainerAndImage({ container, image });
-      releasePort(hostPort);
       if (existing?.status === "running") {
-        this.upsert({
-          ...existing,
-          error: message,
-          updatedAt: new Date().toISOString()
-        });
+        this.upsert({ ...existing, error: message, updatedAt: new Date().toISOString() });
       } else {
-        deployment = {
+        this.upsert({
           ...deployment,
           status: "failed",
-          error: message,
+          error: truncateLog(message, 8000),
           updatedAt: new Date().toISOString()
-        };
-        this.upsert(deployment);
+        });
       }
       throw error;
+    } finally {
+      rmSync(configPath, { force: true });
     }
   }
 
   async remove(slug: string, scope: DeploymentScope = {}): Promise<boolean> {
     return this.withLock(slug, async () => {
-      const deployment = await this.find(slug, scope);
+      const deployment = this.find(slug, scope);
       if (!deployment) return false;
       await this.removeArtifacts(deployment);
-      this.lastActivity.delete(slug);
+      await this.removeCertificate(slug);
       const state = this.readState();
       state.deployments = state.deployments.filter((entry) => entry.slug !== slug);
       this.writeState(state);
@@ -329,78 +294,20 @@ export class DeploymentManager {
   }
 
   async logs(slug: string, tail = 200, scope: DeploymentScope = {}): Promise<string> {
-    const deployment = await this.find(slug, scope);
+    const deployment = this.find(slug, scope);
     if (!deployment) throw new Error(`Unknown deployment: ${slug}`);
     if (deploymentKind(deployment) === "static") {
       return "Static deployment; there is no runtime process or log.";
     }
-    if (deployment.status !== "running" && deployment.status !== "suspended") {
+    if (deployment.status !== "running" || !deployment.flyApp) {
       return [deployment.error, deployment.buildLog].filter(Boolean).join("\n").trim();
     }
-    const result = await runCommand(
-      this.config.podman.command,
-      ["logs", "--tail", String(Math.max(1, Math.min(tail, 1000))), deployment.container],
-      { allowFailure: true }
-    );
-    return result.output.trim();
-  }
-
-  /** Stop container deployments that have not served a request within the idle window. */
-  async sweepIdle(): Promise<void> {
-    const cutoff = Date.now() - this.config.deploy.idleMinutes * 60_000;
-    for (const record of this.readState().deployments) {
-      if (deploymentKind(record) === "static" || record.status !== "running") continue;
-      if (this.lastActivityAt(record) > cutoff) continue;
-      await this.withLock(record.slug, async () => {
-        const current = this.readState().deployments.find((entry) => entry.slug === record.slug);
-        if (!current || current.status !== "running") return;
-        if (this.lastActivityAt(current) > cutoff) return;
-        await runCommand(this.config.podman.command, ["stop", "-t", "5", current.container], { allowFailure: true });
-        this.upsert({
-          ...current,
-          status: "suspended",
-          lastRequestAt: new Date(this.lastActivityAt(current) || Date.now()).toISOString(),
-          updatedAt: new Date().toISOString()
-        });
-      });
-    }
-  }
-
-  private lastActivityAt(record: DeploymentRecord): number {
-    const persisted = Date.parse(record.lastRequestAt ?? "") || Date.parse(record.updatedAt) || 0;
-    return Math.max(this.lastActivity.get(record.slug) ?? 0, persisted);
-  }
-
-  /** Start a suspended deployment's container and wait for it to serve. */
-  private async wake(slug: string): Promise<DeploymentRecord | undefined> {
-    return this.withLock(slug, async () => {
-      const current = await this.find(slug);
-      if (!current || current.status !== "suspended") return current;
-      try {
-        await runCommand(this.config.podman.command, ["start", current.container]);
-        await this.waitUntilReady(current.hostPort, current.container);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const failed: DeploymentRecord = {
-          ...current,
-          status: "stopped",
-          error: `Wake from suspend failed: ${truncateLog(message, 4000)}`,
-          updatedAt: new Date().toISOString()
-        };
-        this.upsert(failed);
-        return failed;
-      }
-      const woken: DeploymentRecord = {
-        ...current,
-        status: "running",
-        error: undefined,
-        lastRequestAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      this.upsert(woken);
-      this.lastActivity.set(slug, Date.now());
-      return woken;
+    const result = await runCommand(this.config.fly.flyctl, ["logs", "--app", deployment.flyApp, "--no-tail"], {
+      allowFailure: true,
+      env: { FLY_API_TOKEN: this.config.fly.token, FLY_NO_UPDATE_CHECK: "1" }
     });
+    const lines = result.output.trim().split("\n");
+    return lines.slice(-Math.max(1, Math.min(tail, 1000))).join("\n");
   }
 
   async fetch(
@@ -408,26 +315,20 @@ export class DeploymentManager {
     request: PreviewFetchRequest,
     mode: DeploymentRouteMode = "path"
   ): Promise<PreviewFetchResponse> {
-    let deployment = await this.find(slug);
+    const deployment = this.find(slug);
     if (!deployment) {
       return textResponse(404, `Unknown deployment: ${slug}`);
-    }
-
-    if (deploymentKind(deployment) === "static") {
-      if (deployment.status !== "running") {
-        return textResponse(503, `Deployment is ${deployment.status}`);
-      }
-      return this.serveStatic(deployment, request, mode);
-    }
-
-    this.lastActivity.set(slug, Date.now());
-    if (deployment.status === "suspended") {
-      deployment = (await this.wake(slug)) ?? deployment;
     }
     if (deployment.status !== "running") {
       return textResponse(503, `Deployment is ${deployment.status}`);
     }
 
+    if (deploymentKind(deployment) === "static") {
+      return this.serveStatic(deployment, request, mode);
+    }
+
+    // fly-proxy wakes a scaled-to-zero app on this request (a few seconds
+    // after idle); no wake bookkeeping on our side.
     const body =
       request.body && request.method !== "GET" && request.method !== "HEAD"
         ? (new Uint8Array(request.body) as BodyInit)
@@ -435,7 +336,7 @@ export class DeploymentManager {
 
     let response: Response;
     try {
-      response = await fetch(`http://127.0.0.1:${deployment.hostPort}${request.path}`, {
+      response = await fetch(`https://${deployment.flyApp}.fly.dev${request.path}`, {
         method: request.method,
         headers: request.headers,
         body,
@@ -457,10 +358,60 @@ export class DeploymentManager {
     );
   }
 
-  private async find(slug: string, scope: DeploymentScope = {}): Promise<DeploymentRecord | undefined> {
+  // ---- Fly plumbing ---------------------------------------------------------
+
+  private async machinesApi(method: string, path: string, body?: unknown): Promise<any> {
+    const response = await fetch(`${MACHINES_API}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${this.config.fly.token}`, "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`fly ${method} ${path} -> ${response.status}: ${text.slice(0, 300)}`);
+    }
+    return text ? JSON.parse(text) : undefined;
+  }
+
+  private async graphql(query: string, variables: Record<string, unknown>): Promise<{ errors?: Array<{ message: string }> }> {
+    const response = await fetch(GRAPHQL_API, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.config.fly.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query, variables })
+    });
+    return (await response.json()) as { errors?: Array<{ message: string }> };
+  }
+
+  /** slug.agentmom.xyz terminates TLS at the server app's Fly edge. */
+  private async ensureCertificate(slug: string): Promise<void> {
+    const { serverApp, token } = this.config.fly;
+    if (!serverApp || !token || !this.config.deploymentBaseDomain) return;
+    const hostname = `${slug}.${this.config.deploymentBaseDomain}`;
+    const payload = await this.graphql(
+      "mutation($input: AddCertificateInput!) { addCertificate(input: $input) { certificate { id } } }",
+      { input: { appId: serverApp, hostname } }
+    ).catch(() => undefined);
+    const message = payload?.errors?.[0]?.message ?? "";
+    if (message && !/already/i.test(message)) {
+      console.warn(`certificate for ${hostname}: ${message}`);
+    }
+  }
+
+  private async removeCertificate(slug: string): Promise<void> {
+    const { serverApp, token } = this.config.fly;
+    if (!serverApp || !token || !this.config.deploymentBaseDomain) return;
+    await this.graphql(
+      "mutation($input: DeleteCertificateInput!) { deleteCertificate(input: $input) { app { id } } }",
+      { input: { appId: serverApp, hostname: `${slug}.${this.config.deploymentBaseDomain}` } }
+    ).catch(() => undefined);
+  }
+
+  // ---- Shared internals -------------------------------------------------------
+
+  private find(slug: string, scope: DeploymentScope = {}): DeploymentRecord | undefined {
     const deployment = this.readState().deployments.find((entry) => entry.slug === slug);
     if (!deployment || !this.matchesScope(deployment, scope)) return undefined;
-    return this.reconcile(deployment);
+    return this.decorate(deployment);
   }
 
   private matchesScope(deployment: DeploymentRecord | undefined, scope: DeploymentScope): boolean {
@@ -494,50 +445,17 @@ export class DeploymentManager {
     };
   }
 
-  private async reconcile(deployment: DeploymentRecord): Promise<DeploymentRecord> {
-    const decorated = this.decorate(deployment);
-    if (deploymentKind(decorated) === "static" || decorated.status !== "running") return decorated;
-
-    const state = await this.containerState(decorated.container);
-    if (state === "running") return decorated;
-
-    if (state === "stopped") {
-      // The container exists but is not running (host reboot, crash past the retry
-      // limit, manual stop). Treat it as suspended so the next request wakes it.
-      const suspended: DeploymentRecord = {
-        ...decorated,
-        status: "suspended",
-        updatedAt: new Date().toISOString()
-      };
-      this.upsert(suspended);
-      return suspended;
-    }
-
-    const stopped: DeploymentRecord = {
-      ...decorated,
-      status: "stopped",
-      error: "Container is not running",
-      updatedAt: new Date().toISOString()
-    };
-    this.upsert(stopped);
-    return stopped;
-  }
-
-  private async containerState(container: string): Promise<"running" | "stopped" | "missing"> {
-    const result = await runCommand(
-      this.config.podman.command,
-      ["container", "inspect", "--format", "{{.State.Running}}", container],
-      { allowFailure: true }
-    );
-    if (result.exitCode !== 0) return "missing";
-    return result.output.trim() === "true" ? "running" : "stopped";
-  }
-
-  private async removeArtifacts(target: DeploymentRecord | undefined): Promise<void> {
+  /** Delete a deployment's leftovers, keeping anything the replacement still uses. */
+  private async removeArtifacts(target: DeploymentRecord | undefined, replacement?: DeploymentRecord): Promise<void> {
     if (!target) return;
-    await this.removeContainerAndImage(target);
-    if (deploymentKind(target) === "container") releasePort(target.hostPort);
-    if (target.staticDir && this.pathIsInside(target.staticDir, join(this.deploymentDir, "static"))) {
+    if (target.flyApp && target.flyApp !== replacement?.flyApp) {
+      await this.machinesApi("DELETE", `/apps/${target.flyApp}`).catch(() => {});
+    }
+    if (
+      target.staticDir &&
+      target.staticDir !== replacement?.staticDir &&
+      this.pathIsInside(target.staticDir, join(this.deploymentDir, "static"))
+    ) {
       rmSync(target.staticDir, { recursive: true, force: true });
     }
   }
@@ -580,36 +498,6 @@ export class DeploymentManager {
         body
       },
       mode
-    );
-  }
-
-  private async waitUntilReady(hostPort: number, container: string): Promise<void> {
-    const timeoutMs = Number.parseInt(process.env.AGENTMOM_DEPLOYMENT_READY_TIMEOUT_MS ?? "30000", 10);
-    const deadline = Date.now() + (Number.isFinite(timeoutMs) ? timeoutMs : 30_000);
-    let lastError = "no response yet";
-
-    while (Date.now() < deadline) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 1000);
-      try {
-        const response = await fetch(`http://127.0.0.1:${hostPort}/`, {
-          method: "GET",
-          signal: controller.signal
-        });
-        await response.arrayBuffer();
-        if (response.status < 500) return;
-        lastError = `HTTP ${response.status}`;
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
-      } finally {
-        clearTimeout(timeout);
-      }
-      await sleep(250);
-    }
-
-    const logs = await runCommand(this.config.podman.command, ["logs", "--tail", "80", container], { allowFailure: true });
-    throw new Error(
-      `Deployment did not become ready on 127.0.0.1:${hostPort}: ${lastError}\n${truncateLog(logs.output.trim(), 4000)}`
     );
   }
 
@@ -658,16 +546,6 @@ export class DeploymentManager {
     renameSync(tmp, this.statePath);
   }
 
-  private async removeContainerAndImage(target: { container?: string; image?: string } | undefined): Promise<void> {
-    if (!target) return;
-    if (target.container) {
-      await runCommand(this.config.podman.command, ["rm", "-f", target.container], { allowFailure: true });
-    }
-    if (target.image) {
-      await runCommand(this.config.podman.command, ["rmi", "-f", target.image], { allowFailure: true });
-    }
-  }
-
   private async withLock<T>(slug: string, action: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(slug) ?? Promise.resolve();
     let release!: () => void;
@@ -691,6 +569,24 @@ export class DeploymentManager {
 
 function deploymentKind(record: DeploymentRecord): "container" | "static" {
   return record.kind ?? "container";
+}
+
+function deploymentFlyToml(app: string, region: string, port: number): string {
+  return [
+    `app = "${app}"`,
+    `primary_region = "${region}"`,
+    "",
+    "[env]",
+    `  PORT = "${port}"`,
+    "",
+    "[http_service]",
+    `  internal_port = ${port}`,
+    "  force_https = true",
+    '  auto_stop_machines = "stop"',
+    "  auto_start_machines = true",
+    "  min_machines_running = 0",
+    ""
+  ].join("\n");
 }
 
 function copyStaticSite(src: string, dest: string): void {
@@ -819,13 +715,13 @@ function rewriteLocationHeader(
 
   try {
     const url = new URL(location);
-    if (url.hostname === "127.0.0.1" && url.port === String(deployment.hostPort)) {
+    if (deployment.flyApp && url.hostname === `${deployment.flyApp}.fly.dev`) {
       headers.location =
         mode === "path" || !deployment.urlHost
           ? `${prefix}${url.pathname}${url.search}${url.hash}`
           : `https://${deployment.urlHost}${url.pathname}${url.search}${url.hash}`;
     }
   } catch {
-    // Relative redirects like "next" are already relative to /deploy/<slug>/.
+    // Relative redirects are already relative to the deployment prefix.
   }
 }

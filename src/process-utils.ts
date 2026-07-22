@@ -12,12 +12,13 @@ export function runCommand(
   options: {
     cwd?: string;
     allowFailure?: boolean;
+    env?: NodeJS.ProcessEnv;
   } = {}
 ): Promise<CommandResult> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: process.env,
+      env: options.env ? { ...process.env, ...options.env } : process.env,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true
     });

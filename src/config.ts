@@ -43,6 +43,9 @@ export type AppConfig = {
     volumeGb: number;
     idleMinutes: number;
     appPrefix: string;
+    deployAppPrefix: string;
+    serverApp?: string;
+    flyctl: string;
     shimUrl: string;
   };
   deploy: {
@@ -246,6 +249,9 @@ export function loadConfig(options: LoadConfigOptions = {}): AppConfig {
       volumeGb: numberFromEnv("AGENTMOM_FLY_VOLUME_GB", 10),
       idleMinutes: numberFromEnv("AGENTMOM_FLY_IDLE_MINUTES", 10),
       appPrefix: process.env.AGENTMOM_FLY_APP_PREFIX ?? "am-ws-",
+      deployAppPrefix: process.env.AGENTMOM_FLY_DEPLOY_APP_PREFIX ?? "am-dep-",
+      serverApp: process.env.AGENTMOM_FLY_SERVER_APP,
+      flyctl: process.env.AGENTMOM_FLYCTL_COMMAND ?? "flyctl",
       shimUrl:
         process.env.AGENTMOM_FLY_SHIM_URL ??
         (domainFromEnv("AGENTMOM_DEPLOYMENT_BASE_DOMAIN")
