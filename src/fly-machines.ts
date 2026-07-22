@@ -17,6 +17,11 @@ export type FlyExec = (
  * One Fly Machine per workspace: app `am-ws-<id16>`, a volume at /workspace,
  * and the sandbox shim on :8080 behind the app's fly.dev hostname.
  */
+export function flyAppName(appPrefix: string, workspaceId: string | undefined): string {
+  const id = (workspaceId ?? "default").replaceAll(/[^a-z0-9]/gi, "").toLowerCase();
+  return `${appPrefix}${id.slice(0, 16) || "default"}`;
+}
+
 export class FlySandbox {
   private machineId?: string;
   private provisioned = false;
@@ -28,8 +33,7 @@ export class FlySandbox {
   constructor(private readonly config: AppConfig) {}
 
   get appName(): string {
-    const id = (this.config.workspaceId ?? "default").replaceAll(/[^a-z0-9]/gi, "").toLowerCase();
-    return `${this.config.fly.appPrefix}${id.slice(0, 16) || "default"}`;
+    return flyAppName(this.config.fly.appPrefix, this.config.workspaceId);
   }
 
   get guestWorkspace(): string {
@@ -125,7 +129,7 @@ export class FlySandbox {
           {
             protocol: "tcp",
             internal_port: 8080,
-            autostart: true,
+            autostart: false,
             autostop: "off",
             ports: [
               { port: 80, handlers: ["http"] },

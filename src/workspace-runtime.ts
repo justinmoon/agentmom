@@ -20,6 +20,10 @@ export class WorkspaceRuntimeManager {
     private readonly deployments?: DeploymentManager
   ) {}
 
+  peek(workspaceId: string): Promise<WorkspaceRuntime> | undefined {
+    return this.runtimes.get(workspaceId);
+  }
+
   async get(workspace: CatalogWorkspace): Promise<WorkspaceRuntime> {
     let runtime = this.runtimes.get(workspace.id);
     if (!runtime) {

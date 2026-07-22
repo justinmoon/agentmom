@@ -531,6 +531,13 @@ export class PiBridge {
     this.flyIdleTimer.unref?.();
   }
 
+  /** Used by the global reaper: is this workspace's sandbox legitimately in use? */
+  isSandboxBusy(): boolean {
+    if (this.config.executor !== "fly") return false;
+    if (this.isRunning) return true;
+    return this.fly !== undefined && this.fly.idleMs() < this.config.fly.idleMinutes * 60_000;
+  }
+
   private async stopFlyIfIdle(): Promise<void> {
     const fly = this.fly;
     if (!fly || this.isRunning || !fly.up) return;

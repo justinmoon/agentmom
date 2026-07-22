@@ -27,6 +27,7 @@ import {
   sendProxyResponse,
   serveStatic
 } from "./http-utils.js";
+import { startSandboxReaper } from "./sandbox-reaper.js";
 import { ensureWorkspaceProjectPath, workspaceApiPath, workspacePreviewPath } from "./server-paths.js";
 import { createSkill, deleteSkill, listSkillFiles, readSkillFile, writeSkillFile } from "./skills.js";
 import { TelegramChannel } from "./telegram-channel.js";
@@ -306,6 +307,7 @@ if (!isProduction) {
 
 await startServer();
 startTelegramChannel();
+startSandboxReaper(config, catalog, runtimes);
 
 process.on("SIGINT", () => shutdown());
 process.on("SIGTERM", () => shutdown());
