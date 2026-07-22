@@ -15,6 +15,13 @@
     self.nixosModules.prodHost
   ];
 
+  # This box doubles as the shared VM-runner substrate ("compute"): jiggy's
+  # forge drives CI microVMs here via agent-vm's v (~/code/agent-vm,
+  # synced by git push from the mac; ~/configs likewise).
+  users.users.justin.openssh.authorizedKeys.keys = [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINFsR0IWebrunalEymjnDio+1MV0Sfp04b9qTHGQCrlw forge@lab"
+  ];
+
   boot.loader.grub = {
     enable = true;
     device = "/dev/disk/by-id/nvme-eui.00000000000000018ce38e05001f1973";
