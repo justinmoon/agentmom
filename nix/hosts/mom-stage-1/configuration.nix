@@ -69,5 +69,10 @@
 
   services.agentmomWeb.flyTokenFile = config.age.secrets.fly-api-token.path;
 
+  # agentmom moved to Fly on 2026-07-22 (todos/fly-server/plan.md). Keep the
+  # service off so re-applying this host (now the personal CI runner) cannot
+  # resurrect a second prod + duelling telegram poller.
+  services.agentmomWeb.enable = lib.mkForce false;
+
   system.stateVersion = "25.05";
 }
