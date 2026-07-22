@@ -12,7 +12,7 @@
     (modulesPath + "/profiles/qemu-guest.nix")
     ../common/base.nix
     ./disk-config.nix
-    self.nixosModules.stageHost
+    self.nixosModules.prodHost
   ];
 
   boot.loader.grub = {
@@ -51,11 +51,6 @@
     group = "root";
     mode = "0400";
   };
-
-  # Pre-cutover (todos/mom1-migration.md): this host is becoming prod.
-  # The telegram bot token only works on one host at a time — keep the bot
-  # off here until mom-1 stops polling at cutover.
-  systemd.services.agentmom.environment.AGENTMOM_TELEGRAM_DISABLED = "1";
 
   # 62G host: keep per-workspace VM ceilings well below physical memory.
   services.agentmomWeb.smolvm.memoryMb = 4096;
