@@ -22,7 +22,6 @@ buildNpmPackage {
         || base == ".agentmom"
         || base == ".agentmom-auth"
         || base == ".smoke-workspace"
-        || base == ".smoke-smolvm-workspace"
         || base == "dist"
         || base == "node_modules"
         || base == "projects"

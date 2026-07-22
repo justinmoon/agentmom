@@ -151,12 +151,7 @@ export class PreviewManager {
     chmodSync(hostCliPath, 0o755);
     chmodSync(hostProtocolPath, 0o644);
 
-    const guestBinDir =
-      this.config.executor === "smolvm"
-        ? pathPosix.join(this.config.smolvm.guestWorkspace, ".agentmom", "bin")
-        : this.config.executor === "fly"
-          ? "/workspace/.agentmom/bin"
-          : hostBinDir;
+    const guestBinDir = this.config.executor === "fly" ? "/workspace/.agentmom/bin" : hostBinDir;
 
     return { hostBinDir, guestBinDir };
   }

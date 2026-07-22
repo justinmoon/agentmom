@@ -47,13 +47,13 @@ try {
   ]);
   assertCliFails(mom, ["deploy", "--cwd", "/tmp/demo", "--port", "12abc", "--slug", "bad-port"], /Usage/);
 
-  process.env.AGENTMOM_EXECUTOR = "smolvm";
+  process.env.AGENTMOM_EXECUTOR = "fly";
   process.env.AGENTMOM_SMOLVM_GUEST_WORKSPACE = "/workspace";
-  const smolvmInstall = new PreviewManager(loadConfig()).cliInstall();
-  assert.equal(smolvmInstall.guestBinDir, "/workspace/.agentmom/bin");
-  const smolvmPreviews = new PreviewManager(loadConfig());
-  assert.equal(smolvmPreviews.register({ port: 4322, name: "guest app" }).runtime, "smolvm");
-  assert.equal(smolvmPreviews.register({ port: 4323, name: "host static", runtime: "local" }).runtime, "local");
+  const flyInstall = new PreviewManager(loadConfig()).cliInstall();
+  assert.equal(flyInstall.guestBinDir, "/workspace/.agentmom/bin");
+  const flyPreviews = new PreviewManager(loadConfig());
+  assert.equal(flyPreviews.register({ port: 4322, name: "guest app" }).runtime, "fly");
+  assert.equal(flyPreviews.register({ port: 4323, name: "host static", runtime: "local" }).runtime, "local");
 
   const previewHeaders = previewRequestHeaders({
     headers: {

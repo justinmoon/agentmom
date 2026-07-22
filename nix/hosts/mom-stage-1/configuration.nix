@@ -60,8 +60,5 @@
 
   services.agentmomWeb.flyTokenFile = config.age.secrets.fly-api-token.path;
 
-  # 62G host: keep per-workspace VM ceilings well below physical memory.
-  services.agentmomWeb.smolvm.memoryMb = 4096;
-
   system.stateVersion = "25.05";
 }

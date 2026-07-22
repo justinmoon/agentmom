@@ -65,10 +65,6 @@ export function workspaceConfig(base: AppConfig, workspace: CatalogWorkspace): A
     agentCwd: resolve(workspacePath, "projects"),
     agentDir: resolve(workspaceStateDir, "pi"),
     sessionDir: resolve(workspaceStateDir, "sessions"),
-    previewBasePath: `/w/${encodeURIComponent(workspace.id)}/preview`,
-    smolvm: {
-      ...base.smolvm,
-      name: workspace.machineName
-    }
+    previewBasePath: `/w/${encodeURIComponent(workspace.id)}/preview`
   };
 }

@@ -1,7 +1,6 @@
 # Agent Mom Nix deployment
 
 This repo owns the deployable service shape: app package, systemd unit, Podman,
-smolvm, state directories, and optional same-host Caddy routes.
 
 Production deploys use Colmena:
 

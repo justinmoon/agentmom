@@ -39,7 +39,6 @@ import {
 } from "./message-attachments.js";
 import { ensureSkillRoots, skillRoots, toSkillSummary } from "./skills.js";
 import { FlySandbox } from "./fly-machines.js";
-import { SmolvmRuntime } from "./smolvm.js";
 import { allocatePort } from "./process-utils.js";
 import type { AppState, ChatMessage, MessageAttachment, SessionSummary, SkillSummary, UiEvent } from "./types.js";
 import { createWebSearchTool } from "./web-search.js";
@@ -59,7 +58,6 @@ export class PiBridge {
   private liveMessages = new Map<string, ChatMessage>();
   private events: UiEvent[] = [];
   private listeners = new Set<StateListener>();
-  private smolvm?: SmolvmRuntime;
   private fly?: FlySandbox;
   private flyCliPushed = false;
   private flyIdleTimer?: NodeJS.Timeout;
@@ -331,42 +329,12 @@ export class PiBridge {
     }, 300);
   }
 
-  async testRuntimeResume(): Promise<AppState> {
-    if (this.config.executor !== "smolvm") {
-      this.addEvent("runtime", "Resume test unavailable", "Current executor is local", true);
-      this.emit();
-      return this.snapshot();
-    }
-
-    this.lastError = undefined;
-    this.smolvm ??= new SmolvmRuntime(this.config);
-    this.addEvent("runtime", "Resume test started", `Stopping and restarting ${this.config.smolvm.name}`);
-    this.emit();
-
-    try {
-      const result = await this.smolvm.testResume();
-      this.addEvent("runtime", "Resume test passed", stringifyCompact(result));
-    } catch (error) {
-      this.lastError = error instanceof Error ? error.message : String(error);
-      this.addEvent("runtime", "Resume test failed", this.lastError, true);
-    } finally {
-      const removed = this.previews.removeByRuntime("smolvm");
-      if (removed.length > 0) {
-        this.addEvent("preview", "Cleared smolvm previews", `${removed.length} preview process(es) were stopped by resume testing`);
-      }
-    }
-
-    this.emit();
-    return this.snapshot();
-  }
-
   dispose(): void {
     clearTimeout(this.skillReloadTimer);
     clearInterval(this.flyIdleTimer);
     for (const watcher of this.skillWatchers) watcher.close();
     this.skillWatchers = [];
     this.disposeCurrentSession();
-    void this.smolvm?.dispose();
     this.disposePreviewProcesses();
     this.disposeAutoPreviewServers();
     this.listeners.clear();
@@ -384,9 +352,6 @@ export class PiBridge {
 
   /** The project-local skills directory as the agent sees it (guest path when sandboxed). */
   private agentVisibleSkillsDir(): string {
-    if (this.config.executor === "smolvm") {
-      return `${this.config.smolvm.guestWorkspace.replace(/\/+$/, "")}/.pi/skills`;
-    }
     if (this.config.executor === "fly") {
       return "/workspace/.pi/skills";
     }
@@ -463,19 +428,7 @@ export class PiBridge {
       error: this.lastError,
       runtime: {
         executor: this.config.executor,
-        guestWorkspace:
-          this.config.executor === "smolvm"
-            ? this.config.smolvm.guestWorkspace
-            : this.config.executor === "fly"
-              ? "/workspace"
-              : undefined,
-        vm: this.smolvm?.snapshot()
-          ? {
-              name: this.smolvm.snapshot()!.name,
-              state: this.smolvm.snapshot()!.state,
-              pid: this.smolvm.snapshot()!.pid
-            }
-          : undefined
+        guestWorkspace: this.config.executor === "fly" ? "/workspace" : undefined
       }
     };
   }
@@ -503,24 +456,11 @@ export class PiBridge {
           return baseExec(command, cwd, options);
         }
       };
-    } else if (this.config.executor === "smolvm") {
-      this.smolvm ??= new SmolvmRuntime(this.config);
-      this.addEvent("runtime", "Starting smolvm", this.config.smolvm.name);
-      this.emit();
-      await this.smolvm.ensureReady();
-      this.addEvent("runtime", "smolvm ready", this.config.smolvm.name);
-      operations = this.smolvm.createBashOperations();
     } else {
       operations = createLocalBashOperations();
     }
 
-    // In the sandbox, make HOME the mounted workspace so convention paths like
-    // ~/.pi/skills land somewhere persistent, host-visible, and loaded — instead of
-    // vanishing into the VM disk under /root.
-    const commandPrefix =
-      this.config.executor === "smolvm"
-        ? `export HOME=${shellQuote(this.config.smolvm.guestWorkspace)} PATH=${shellQuote(guestBinDir)}:$PATH`
-        : `export PATH=${shellQuote(guestBinDir)}:$PATH`;
+    const commandPrefix = `export PATH=${shellQuote(guestBinDir)}:$PATH`;
 
     return [
       createWebSearchTool(this.config),
@@ -724,9 +664,6 @@ export class PiBridge {
     if (this.config.executor === "fly") {
       const fly = this.getFly();
       await fly.spawnDetached(registration.command, fly.hostToGuest(cwd) ?? fly.guestWorkspace);
-    } else if (this.config.executor === "smolvm") {
-      this.smolvm ??= new SmolvmRuntime(this.config);
-      await this.smolvm.startProcess(registration.command, cwd);
     } else {
       const child = spawn("sh", ["-lc", registration.command], {
         cwd,
@@ -851,12 +788,7 @@ export class PiBridge {
     const trimmed = path.trim();
     if (!trimmed) throw new Error("Path is required");
 
-    const guestWorkspace =
-      this.config.executor === "smolvm"
-        ? this.config.smolvm.guestWorkspace.replace(/\/+$/, "")
-        : this.config.executor === "fly"
-          ? "/workspace"
-          : undefined;
+    const guestWorkspace = this.config.executor === "fly" ? "/workspace" : undefined;
     if (guestWorkspace && (trimmed === guestWorkspace || trimmed.startsWith(`${guestWorkspace}/`))) {
       const relativePath = trimmed.slice(guestWorkspace.length).replace(/^\/+/, "");
       return this.ensureProjectPath(resolve(this.config.projectsDir, relativePath));
@@ -881,8 +813,7 @@ export class PiBridge {
     if (this.config.executor === "fly") {
       return this.getFly().proxy(port, request);
     }
-    this.smolvm ??= new SmolvmRuntime(this.config);
-    return this.smolvm.fetchHttp(port, request);
+    throw new Error("Guest preview fetch is only available with the fly executor");
   }
 
   private addEvent(type: string, title: string, detail?: string, isError = false): void {

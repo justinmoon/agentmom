@@ -85,8 +85,8 @@ in
     };
 
     executor = lib.mkOption {
-      type = lib.types.enum [ "local" "smolvm" "fly" ];
-      default = "smolvm";
+      type = lib.types.enum [ "local" "fly" ];
+      default = "fly";
       description = "Sandbox executor for agent commands.";
     };
 
@@ -147,49 +147,6 @@ in
       };
     };
 
-    smolvm = {
-      package = lib.mkOption {
-        type = lib.types.package;
-        default = self.packages.${pkgs.stdenv.hostPlatform.system}.smolvm;
-        description = "smolvm package used for command execution.";
-      };
-
-      name = lib.mkOption {
-        type = lib.types.str;
-        default = "agentmom-default";
-        description = "Persistent smolvm machine name.";
-      };
-
-      image = lib.mkOption {
-        type = lib.types.str;
-        default = "node:24-bookworm";
-        description = "Default smolvm guest image.";
-      };
-
-      cpus = lib.mkOption {
-        type = lib.types.ints.positive;
-        default = 4;
-        description = "smolvm vCPU count.";
-      };
-
-      memoryMb = lib.mkOption {
-        type = lib.types.ints.positive;
-        default = 8192;
-        description = "smolvm memory in MiB.";
-      };
-
-      storageGib = lib.mkOption {
-        type = lib.types.ints.positive;
-        default = 20;
-        description = "smolvm storage disk size in GiB.";
-      };
-
-      overlayGib = lib.mkOption {
-        type = lib.types.ints.positive;
-        default = 10;
-        description = "smolvm overlay disk size in GiB.";
-      };
-    };
   };
 
   config = lib.mkIf cfg.enable (lib.mkMerge [
@@ -205,7 +162,6 @@ in
 
       environment.systemPackages = [
         cfg.package
-        cfg.smolvm.package
       ];
 
       users.manageLingering = true;
@@ -236,7 +192,6 @@ in
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
         path = [
-          cfg.smolvm.package
           uidmapWrappers
           pkgs.curl
           pkgs.e2fsprogs
@@ -257,13 +212,6 @@ in
             AGENTMOM_PODMAN_COMMAND = lib.getExe pkgs.podman;
             AGENTMOM_PORT = toString cfg.port;
             AGENTMOM_SESSION_DIR = "${cfg.stateDir}/app/sessions";
-            AGENTMOM_SMOLVM_COMMAND = lib.getExe cfg.smolvm.package;
-            AGENTMOM_SMOLVM_CPUS = toString cfg.smolvm.cpus;
-            AGENTMOM_SMOLVM_IMAGE = cfg.smolvm.image;
-            AGENTMOM_SMOLVM_MEMORY_MB = toString cfg.smolvm.memoryMb;
-            AGENTMOM_SMOLVM_NAME = cfg.smolvm.name;
-            AGENTMOM_SMOLVM_OVERLAY_GIB = toString cfg.smolvm.overlayGib;
-            AGENTMOM_SMOLVM_STORAGE_GIB = toString cfg.smolvm.storageGib;
             AGENTMOM_STATE_DIR = "${cfg.stateDir}/app";
             AGENTMOM_WORKSPACE = cfg.workspaceDir;
             HOME = cfg.stateDir;

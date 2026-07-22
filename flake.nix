@@ -61,16 +61,13 @@
         };
       });
 
-      packages = forAllSystems ({ pkgs, system, ... }:
+      packages = forAllSystems ({ pkgs, ... }:
         let
-          smolvmReleaseSystems = [ "aarch64-linux" "x86_64-linux" ];
           agentmom = pkgs.callPackage ./nix/package.nix { };
         in
         {
           inherit agentmom;
           default = agentmom;
-        } // nixpkgs.lib.optionalAttrs (builtins.elem system smolvmReleaseSystems) {
-          smolvm = pkgs.callPackage ./nix/smolvm-release.nix { };
         });
 
       apps = forAllSystems ({ pkgs, system, ... }: {

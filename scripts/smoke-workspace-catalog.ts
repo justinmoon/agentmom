@@ -43,7 +43,6 @@ try {
 
   const runtimeConfig = workspaceConfig(config, userWorkspace);
   assert.equal(runtimeConfig.workspace.startsWith(config.workspaceRoot), true);
-  assert.equal(runtimeConfig.smolvm.name, userWorkspace.machineName);
   assert.equal(runtimeConfig.previewBasePath, `/w/${encodeURIComponent(userWorkspace.id)}/preview`);
   assert.equal(runtimeConfig.workspaceId, userWorkspace.id);
 

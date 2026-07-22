@@ -464,10 +464,6 @@ async function handleWorkspaceRoute(
     return sendJson(res, await bridge.cancel());
   }
 
-  if (rest === "/runtime/resume-test" && req.method === "POST") {
-    return sendJson(res, await bridge.testRuntimeResume());
-  }
-
   if (rest === "/events" && req.method === "GET") {
     return handleSse(bridge, res);
   }

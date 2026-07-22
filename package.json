@@ -13,8 +13,8 @@
     "smoke:web-search": "tsx scripts/smoke-web-search.ts",
     "smoke:session-switch": "tsx scripts/smoke-session-switch.ts",
     "smoke:skills": "AGENTMOM_EXECUTOR=local tsx scripts/smoke-skills.ts",
+    "smoke:fly": "tsx scripts/smoke-fly.ts",
     "smoke:local": "AGENTMOM_EXECUTOR=local tsx scripts/smoke-local.ts",
-    "smoke:smolvm": "AGENTMOM_EXECUTOR=smolvm tsx scripts/smoke-smolvm.ts",
     "smoke:deploy": "AGENTMOM_EXECUTOR=local tsx scripts/smoke-deploy.ts"
   },
   "dependencies": {

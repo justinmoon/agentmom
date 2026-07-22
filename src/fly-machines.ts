@@ -157,7 +157,9 @@ export class FlySandbox {
     }
 
     await this.api("POST", `/apps/${this.appName}/machines/${this.machineId}/start`, {}).catch((error) => {
-      if (!/already started|not stopped/i.test(String(error))) throw error;
+      // Freshly created machines boot on their own ("created"/"starting"),
+      // and racing wakes hit "already started" — all fine, we poll the shim.
+      if (!/already started|not stopped|current state/i.test(String(error))) throw error;
     });
 
     const deadline = Date.now() + 90_000;

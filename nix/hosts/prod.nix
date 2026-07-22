@@ -17,6 +17,5 @@
       publicDomain = "agentmom.xyz";
     };
 
-    smolvm.name = "agentmom-web-prod";
   };
 }

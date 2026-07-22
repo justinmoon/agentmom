@@ -401,7 +401,7 @@ export class CatalogStore {
         displayName: "Dev workspace",
         ownerUserId: user.id,
         workspaceDirName: "dev",
-        machineName: this.config.smolvm.name,
+        machineName: "agentmom-default",
         createdAt: timestamp,
         updatedAt: timestamp
       };

@@ -8,7 +8,7 @@ export type AppConfig = {
   authEnabled: boolean;
   host: string;
   port: number;
-  executor: "local" | "smolvm" | "fly";
+  executor: "local" | "fly";
   stateDir: string;
   workspace: string;
   workspaceId?: string;
@@ -51,17 +51,6 @@ export type AppConfig = {
     pidsLimit: number;
     maxPerWorkspace: number;
     idleMinutes: number;
-  };
-  smolvm: {
-    command: string;
-    name: string;
-    image: string;
-    guestWorkspace: string;
-    cpus: number;
-    memoryMb: number;
-    network: boolean;
-    storageGib: number;
-    overlayGib: number;
   };
 };
 
@@ -166,11 +155,8 @@ function requireServiceSecrets(config: {
   throw new Error(`Missing required app secrets (${missing.join(", ")}); checked ${sourceHint}`);
 }
 
-function executorFromEnv(): "local" | "smolvm" | "fly" {
-  const raw = process.env.AGENTMOM_EXECUTOR;
-  if (raw === "local") return "local";
-  if (raw === "fly") return "fly";
-  return "smolvm";
+function executorFromEnv(): "local" | "fly" {
+  return process.env.AGENTMOM_EXECUTOR === "fly" ? "fly" : "local";
 }
 
 function flyToken(): string {
@@ -266,16 +252,5 @@ export function loadConfig(options: LoadConfigOptions = {}): AppConfig {
           ? `https://${domainFromEnv("AGENTMOM_DEPLOYMENT_BASE_DOMAIN")}/api/sandbox-shim`
           : "")
     },
-    smolvm: {
-      command: process.env.AGENTMOM_SMOLVM_COMMAND ?? "smolvm",
-      name: process.env.AGENTMOM_SMOLVM_NAME ?? "agentmom-default",
-      image: process.env.AGENTMOM_SMOLVM_IMAGE ?? "node:24-bookworm",
-      guestWorkspace: process.env.AGENTMOM_SMOLVM_GUEST_WORKSPACE ?? "/workspace",
-      cpus: numberFromEnv("AGENTMOM_SMOLVM_CPUS", 4),
-      memoryMb: numberFromEnv("AGENTMOM_SMOLVM_MEMORY_MB", 8192),
-      network: process.env.AGENTMOM_SMOLVM_NETWORK !== "0",
-      storageGib: numberFromEnv("AGENTMOM_SMOLVM_STORAGE_GIB", 20),
-      overlayGib: numberFromEnv("AGENTMOM_SMOLVM_OVERLAY_GIB", 10)
-    }
   };
 }
