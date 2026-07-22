@@ -1,7 +1,5 @@
 set dotenv-load := false
 
-prod_host := "compute"
-
 dev:
     nix develop -c npm run dev
 
