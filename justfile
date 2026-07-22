@@ -1,6 +1,6 @@
 set dotenv-load := false
 
-prod_host := "mom-stage-1"
+prod_host := "compute"
 
 dev:
     nix develop -c npm run dev

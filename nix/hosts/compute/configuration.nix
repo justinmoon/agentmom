@@ -33,7 +33,7 @@
   boot.kernelParams = [ "net.ifnames=0" ];
 
   networking = {
-    hostName = "mom-stage-1";
+    hostName = "compute";
     useDHCP = true;
     firewall = {
       enable = true;

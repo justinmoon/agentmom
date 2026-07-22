@@ -7,19 +7,19 @@ let
 
   # Host age identities from /etc/age/key.txt.
   mom_1 = "age16293kjnhamtq3e4nu0q8ydcguy0eajesmkvakrxhudaqtdgq6dqqc38vjv";
-  mom_stage_1 = "age1mtf29wt0we3adcja7k0ylc9hmf2fns3c44qz9g663l0ydepxqdrq94jzzf";
+  compute = "age1mtf29wt0we3adcja7k0ylc9hmf2fns3c44qz9g663l0ydepxqdrq94jzzf";
 
   allKeys = [
     yubikey_primary
     yubikey_backup
     mom_1
-    mom_stage_1
+    compute
   ];
 in
 {
   "nix/secrets/secrets.age".publicKeys = allKeys;
   "nix/secrets/fly-api-token.age".publicKeys = allKeys;
-  # Copied verbatim from configs' secrets/ — mom_stage_1 equals the configs
+  # Copied verbatim from configs' secrets/ — compute's key equals the configs
   # "server" recipient, so the same ciphertext decrypts here unchanged.
   "nix/secrets/nixbuild-net-key.age".publicKeys = allKeys;
   "nix/secrets/github-ssh-key.age".publicKeys = allKeys;

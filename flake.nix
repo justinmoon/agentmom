@@ -82,7 +82,7 @@
       nixosModules.agentmomWeb = import ./nix/module.nix { inherit self; };
       nixosModules.prodHost = import ./nix/hosts/prod.nix { inherit self; };
 
-      nixosConfigurations.mom-stage-1 = mkHost ./nix/hosts/mom-stage-1/configuration.nix;
+      nixosConfigurations.compute = mkHost ./nix/hosts/compute/configuration.nix;
       nixosConfigurations.mom-1 = mkHost ./nix/hosts/mom-1/configuration.nix;
 
       colmenaHive = colmena.lib.makeHive {
@@ -106,10 +106,12 @@
           tags = [ "agentmom" "old-prod" ];
         };
 
-        # The production host (agentmom.xyz) since 2026-07-21.
-        mom-stage-1 = mkColmenaNode {
-          module = ./nix/hosts/mom-stage-1/configuration.nix;
-          targetHost = "mom-stage-1";
+        # The production host (agentmom.xyz) since 2026-07-21. Renamed
+        # compute 2026-07-22: it doubles as the shared VM-runner substrate,
+        # and the host identity follows the box, not the app.
+        compute = mkColmenaNode {
+          module = ./nix/hosts/compute/configuration.nix;
+          targetHost = "135.181.179.143";
           tags = [ "agentmom" "prod" ];
         };
       };
