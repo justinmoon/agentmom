@@ -52,6 +52,13 @@
     mode = "0400";
   };
 
-  systemd.services.agentmom.environment.MOM_ENABLE_TEST_ENDPOINTS = "1";
+  # Pre-cutover (todos/mom1-migration.md): this host is becoming prod.
+  # The telegram bot token only works on one host at a time — keep the bot
+  # off here until mom-1 stops polling at cutover.
+  systemd.services.agentmom.environment.AGENTMOM_TELEGRAM_DISABLED = "1";
+
+  # 62G host: keep per-workspace VM ceilings well below physical memory.
+  services.agentmomWeb.smolvm.memoryMb = 4096;
+
   system.stateVersion = "25.05";
 }

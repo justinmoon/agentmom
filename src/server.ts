@@ -569,6 +569,13 @@ async function shutdown(): Promise<void> {
 }
 
 function startTelegramChannel(): void {
+  // The bot long-polls getUpdates; the token only works on one host at a
+  // time. This flag lets a standby host run with full secrets without
+  // fighting the active host for updates.
+  if (process.env.AGENTMOM_TELEGRAM_DISABLED === "1") {
+    console.log("telegram channel disabled via AGENTMOM_TELEGRAM_DISABLED");
+    return;
+  }
   const token = config.telegram.botToken?.trim();
   if (!token) return;
 
