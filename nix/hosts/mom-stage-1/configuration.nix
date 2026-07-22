@@ -11,6 +11,7 @@
     (modulesPath + "/installer/scan/not-detected.nix")
     (modulesPath + "/profiles/qemu-guest.nix")
     ../common/base.nix
+    ../common/nixbuild-net.nix
     ./disk-config.nix
     self.nixosModules.prodHost
   ];
