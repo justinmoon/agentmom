@@ -15,14 +15,13 @@ check against the local service on the host.
 The equivalent direct NixOS switch is:
 
 ```bash
-nixos-rebuild switch --flake .#mom-1 --target-host mom-1
+nixos-rebuild switch --flake .#mom-stage-1 --target-host mom-stage-1
 ```
 
 If another repo owns the surrounding host config, it should only import one of
 these modules:
 
 ```nix
-inputs.agentmom.nixosModules.stageHost
 inputs.agentmom.nixosModules.prodHost
 ```
 
@@ -66,5 +65,5 @@ Edit it with agenix:
 RULES=nix/secrets/secrets.nix agenix -e nix/secrets/secrets.age -i ~/configs/yubikeys/keys.txt
 ```
 
-The stage and prod host modules assume Caddy runs on the same host as the app.
+The prod host module assumes Caddy runs on the same host as the app.
 For prod, `agentmom.xyz` and `*.agentmom.xyz` should point at `mom-1`.

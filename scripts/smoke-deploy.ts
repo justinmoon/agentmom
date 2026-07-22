@@ -10,7 +10,7 @@ const projectPath = join(agentCwd, "demo");
 process.env.AGENTMOM_WORKSPACE = workspace;
 process.env.AGENTMOM_AGENT_CWD = agentCwd;
 process.env.AGENTMOM_DEPLOYMENT_DIR = join(workspace, ".agentmom", "deployments");
-process.env.AGENTMOM_DEPLOYMENT_BASE_DOMAIN = "mom-stage.agentmom.xyz";
+process.env.AGENTMOM_DEPLOYMENT_BASE_DOMAIN = "smoke.example.com";
 process.env.AGENTMOM_DEPLOYMENT_READY_TIMEOUT_MS = "2500";
 process.env.AGENTMOM_PODMAN_COMMAND ??= "podman";
 process.env.AGENTMOM_DEPLOY_MAX_PER_WORKSPACE = "2";
@@ -31,19 +31,19 @@ let deployedSlug: string | undefined;
 try {
   const deployment = await manager.publish({ path: "demo", slug: "smoke-demo", port: 3000 });
   deployedSlug = deployment.slug;
-  if (deployment.url !== "https://smoke-demo.mom-stage.agentmom.xyz/") {
+  if (deployment.url !== "https://smoke-demo.smoke.example.com/") {
     throw new Error(`Unexpected deployment URL: ${deployment.url}`);
   }
-  if (deploymentSlugFromHost("smoke-demo.mom-stage.agentmom.xyz", "mom-stage.agentmom.xyz") !== "smoke-demo") {
+  if (deploymentSlugFromHost("smoke-demo.smoke.example.com", "smoke.example.com") !== "smoke-demo") {
     throw new Error("Deployment host parser did not recognize slug host");
   }
-  if (deploymentSlugFromHost("mom-stage.agentmom.xyz", "mom-stage.agentmom.xyz") !== undefined) {
+  if (deploymentSlugFromHost("smoke.example.com", "smoke.example.com") !== undefined) {
     throw new Error("Deployment host parser should not route the base app host");
   }
-  if (!isAllowedDeploymentDomain("smoke-demo.mom-stage.agentmom.xyz", "mom-stage.agentmom.xyz")) {
+  if (!isAllowedDeploymentDomain("smoke-demo.smoke.example.com", "smoke.example.com")) {
     throw new Error("TLS ask helper did not allow deployment host");
   }
-  if (isAllowedDeploymentDomain("nested.smoke-demo.mom-stage.agentmom.xyz", "mom-stage.agentmom.xyz")) {
+  if (isAllowedDeploymentDomain("nested.smoke-demo.smoke.example.com", "smoke.example.com")) {
     throw new Error("TLS ask helper should not allow nested deployment hosts");
   }
 

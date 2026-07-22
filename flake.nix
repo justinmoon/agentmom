@@ -83,7 +83,6 @@
       nixosModules.default = self.nixosModules.agentmomWeb;
       nixosModules.agentmom = self.nixosModules.agentmomWeb;
       nixosModules.agentmomWeb = import ./nix/module.nix { inherit self; };
-      nixosModules.stageHost = import ./nix/hosts/stage.nix { inherit self; };
       nixosModules.prodHost = import ./nix/hosts/prod.nix { inherit self; };
 
       nixosConfigurations.mom-stage-1 = mkHost ./nix/hosts/mom-stage-1/configuration.nix;
