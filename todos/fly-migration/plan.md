@@ -78,25 +78,32 @@ provision 6.2s once; API cold start ~1.6s; autostart-on-request ~5s
 e2e; warm exec p50 156ms from US laptop = RTT-dominated (Hetzner-FI →
 arn should be ~15-25ms).
 
-## Steps
+## Steps (ALL DONE 2026-07-21)
 
-- [ ] Shim (`src/sandbox-shim.mjs`) + `/api/sandbox-shim` route
-- [ ] `src/fly-machines.ts` — FlySandbox: provision, exec/spawn, file
-      ops, proxy, tar push/pull, start/stop, idle tracking
-- [ ] Config: executor `fly`, `fly.{app prefix, region, image,
-      idleMinutes, tokenFile}`; delete smolvm config
-- [ ] pi-bridge: fly operations for bash/read/write/edit, attachments
-      via shim, mirror pull at agent_end, preview proxy via shim,
-      preview spawn via shim, deployment pull-before-build, wake on
-      message, idle stop timer
-- [ ] Migration script `scripts/migrate-to-fly.ts`
-- [ ] Delete smolvm: src/smolvm.ts, resume-test endpoint, config,
-      nix module options/package wiring, smoke-smolvm, docs mentions
-- [ ] Local test with real Fly app on a scratch workspace
-- [ ] Nix secret for FLY_API_TOKEN + module env wiring
-- [ ] Deploy, run migration for all workspaces, verify per-workspace
-      (files present, turn works, preview works, skill visible)
-- [ ] Watch: idle stop fires at ~10 min; wake works next morning
+- [x] Everything shipped: shim, FlySandbox, config, pi-bridge
+      integration, migration script, smolvm deletion, nix secret.
+- [x] Validated: smoke:fly against a real machine (exec/file/spawn/
+      proxy/tar/HOME/wake-with-volume); real LLM turn locally with all
+      four tools coherent against the machine + mirror pull verified;
+      all other smokes green; full closure build.
+- [x] Deployed (executor=fly), all 13 workspaces migrated (~20s each,
+      zero failures), data verified in-machine (justin's skills
+      present). Machines stopped post-migration; they wake on demand.
+- [x] Old smolvm VM + caches removed from the server (2.3G freed).
+- [ ] Watch: idle-stop at 10m during real use; users' first turns
+      (report any missing guest-installed packages — expected, agents
+      reinstall).
+
+## Gotchas hit (for posterity)
+
+- `fly tokens create org` silently writes NOTHING without the org slug
+  when non-interactive — always verify secret byte counts.
+- Freshly created machines auto-boot; explicit start gets 412
+  "current state: 'created'" (benign).
+- New-app fly.dev routing takes ~20-30s to propagate — provision is
+  ~30s one-time; subsequent wakes are seconds.
+- esbuild/tsx spawn fails EACCES if cwd is unreadable by the service
+  user.
 
 ## Implementation Notes
 
