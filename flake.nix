@@ -109,7 +109,7 @@
 
         mom-stage-1 = mkColmenaNode {
           module = ./nix/hosts/mom-stage-1/configuration.nix;
-          targetHost = "100.92.189.28";
+          targetHost = "mom-stage-1";
           tags = [ "agentmom" "stage" ];
         };
       };

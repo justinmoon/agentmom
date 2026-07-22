@@ -30,6 +30,7 @@
     firewall = {
       enable = true;
       allowPing = true;
+      allowedTCPPorts = [ 22 ];
       interfaces.tailscale0 = {
         allowedTCPPorts = [ 22 7392 ];
         allowedTCPPortRanges = [
