@@ -12,6 +12,7 @@
     (modulesPath + "/profiles/qemu-guest.nix")
     ../common/base.nix
     ../common/nixbuild-net.nix
+    ../common/github-ssh.nix
     ./disk-config.nix
     self.nixosModules.prodHost
   ];

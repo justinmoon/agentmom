@@ -22,4 +22,5 @@ in
   # Copied verbatim from configs' secrets/ — mom_stage_1 equals the configs
   # "server" recipient, so the same ciphertext decrypts here unchanged.
   "nix/secrets/nixbuild-net-key.age".publicKeys = allKeys;
+  "nix/secrets/github-ssh-key.age".publicKeys = allKeys;
 }
