@@ -1,26 +1,59 @@
-import { CircleStop, File as FileIcon, Image, Plus, Send, X } from "lucide-react";
-import React, { useCallback, useRef, useState } from "react";
+import { CircleStop, File as FileIcon, Image, Plus, Send, Sparkles, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MAX_MESSAGE_ATTACHMENT_BYTES,
   MAX_MESSAGE_ATTACHMENT_TOTAL_BYTES,
   MAX_MESSAGE_ATTACHMENTS,
-  type MessageAttachment
+  type MessageAttachment,
+  type SkillSummary
 } from "../src/types.js";
 import { readError } from "./http.js";
 
 type AttachmentComposerProps = {
   isRunning: boolean;
+  skills: SkillSummary[];
   onCancel: () => Promise<void>;
   onSend: (content: string, attachments: MessageAttachment[]) => Promise<void>;
 };
 
-export function AttachmentComposer({ isRunning, onCancel, onSend }: AttachmentComposerProps) {
+export function AttachmentComposer({ isRunning, skills, onCancel, onSend }: AttachmentComposerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [uploadError, setUploadError] = useState<string | undefined>();
+  const [pickerIndex, setPickerIndex] = useState(0);
+  const [pickerDismissed, setPickerDismissed] = useState(false);
+
+  // The `/` skill picker is only offered while choosing the skill name, i.e. before
+  // the first space — matching where the agent expands `/skill:<name> <args>`.
+  const skillQuery = useMemo(() => {
+    if (!draft.startsWith("/") || /\s/.test(draft)) return null;
+    const text = draft.slice(1);
+    return text.startsWith("skill:") ? text.slice("skill:".length) : text;
+  }, [draft]);
+
+  const skillMatches = useMemo(() => {
+    if (skillQuery === null) return [];
+    const query = skillQuery.toLowerCase();
+    return skills
+      .filter((skill) => skill.name.toLowerCase().includes(query) || skill.description.toLowerCase().includes(query))
+      .slice(0, 8);
+  }, [skillQuery, skills]);
+
+  const pickerOpen = skillMatches.length > 0 && !pickerDismissed;
+
+  useEffect(() => {
+    setPickerIndex(0);
+  }, [skillQuery]);
+
+  function pickSkill(skill: SkillSummary) {
+    setDraft(`/skill:${skill.name} `);
+    setPickerDismissed(false);
+    textareaRef.current?.focus();
+  }
 
   const addFiles = useCallback(
     async (files: File[]) => {
@@ -142,14 +175,65 @@ export function AttachmentComposer({ isRunning, onCancel, onSend }: AttachmentCo
         <Plus size={20} />
       </button>
 
+      {pickerOpen && (
+        <div className="skill-picker" role="listbox" aria-label="Skills">
+          {skillMatches.map((skill, index) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={index === pickerIndex}
+              className={index === pickerIndex ? "skill-picker-item active" : "skill-picker-item"}
+              key={`${skill.source}-${skill.name}`}
+              onMouseEnter={() => setPickerIndex(index)}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                pickSkill(skill);
+              }}
+            >
+              <Sparkles size={14} className="skill-picker-icon" />
+              <span className="skill-picker-name">{skill.name}</span>
+              <span className="skill-picker-desc">{skill.description}</span>
+              <span className="skill-picker-source">{skill.source}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       <textarea
         autoFocus
+        ref={textareaRef}
         className="composer-input"
         placeholder="Ask for a code change, command, or explanation..."
         value={draft}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          setPickerDismissed(false);
+        }}
         onKeyDown={(event) => {
-          if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+          if (event.nativeEvent.isComposing) return;
+          if (pickerOpen) {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              setPickerIndex((index) => (index + 1) % skillMatches.length);
+              return;
+            }
+            if (event.key === "ArrowUp") {
+              event.preventDefault();
+              setPickerIndex((index) => (index - 1 + skillMatches.length) % skillMatches.length);
+              return;
+            }
+            if (event.key === "Enter" || event.key === "Tab") {
+              event.preventDefault();
+              pickSkill(skillMatches[pickerIndex] ?? skillMatches[0]);
+              return;
+            }
+            if (event.key === "Escape") {
+              event.preventDefault();
+              setPickerDismissed(true);
+              return;
+            }
+          }
+          if (event.key !== "Enter" || event.shiftKey) return;
           event.preventDefault();
           void submit();
         }}

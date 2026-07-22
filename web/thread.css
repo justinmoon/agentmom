@@ -199,6 +199,7 @@
 }
 
 .composer {
+  position: relative;
   width: 100%;
   max-width: 720px;
   margin: 0 auto;
@@ -276,6 +277,68 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
+}
+
+/* Skill picker: popup listbox shown while typing a leading "/" */
+.skill-picker {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+}
+
+.skill-picker-item {
+  min-width: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.skill-picker-item.active {
+  background: var(--accent-tint);
+}
+
+.skill-picker-icon {
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.skill-picker-name {
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.skill-picker-desc {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-picker-source {
+  flex: 0 0 auto;
+  color: var(--dim);
+  font-size: 0.72rem;
+  text-transform: capitalize;
 }
 
 .attachment-list {

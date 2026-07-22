@@ -119,20 +119,43 @@ export type DeploymentRecord = {
   slug: string;
   name: string;
   projectPath: string;
+  /** Older records predate this field; undefined means "container". */
+  kind?: "container" | "static";
   image: string;
   container: string;
   containerPort: number;
   hostPort: number;
+  /** Directory the deployed files are served from (static deployments only). */
+  staticDir?: string;
   urlPath: string;
   url?: string;
   urlHost?: string;
-  status: "building" | "running" | "failed" | "stopped";
+  status: "building" | "running" | "suspended" | "failed" | "stopped";
   createdAt: string;
   updatedAt: string;
   lastDeployAt?: string;
+  lastRequestAt?: string;
   error?: string;
   buildLog?: string;
 };
+
+export type SkillSource = "workspace" | "project";
+
+export type SkillSummary = {
+  name: string;
+  description: string;
+  source: SkillSource;
+  filePath: string;
+  baseDir: string;
+  disableModelInvocation: boolean;
+};
+
+export type SkillFileEntry = {
+  path: string;
+  size: number;
+};
+
+export const MAX_SKILL_FILE_BYTES = 1024 * 1024;
 
 export type AppState = {
   app: {
@@ -146,6 +169,7 @@ export type AppState = {
   session?: SessionSummary;
   sessions: SessionSummary[];
   previews: PreviewService[];
+  skills: SkillSummary[];
   messages: ChatMessage[];
   events: UiEvent[];
   isRunning: boolean;

@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import type { AppConfig } from "./config.js";
 import { isReservedDeploymentSlug, type DeploymentRouteMode, slugify } from "./deployment-routing.js";
-import { allocatePort, runCommand, sleep, truncateLog } from "./process-utils.js";
+import { allocatePort, releasePort, reservePort, runCommand, sleep, truncateLog } from "./process-utils.js";
 import type { DeploymentRecord } from "./types.js";
 import type { PreviewFetchRequest, PreviewFetchResponse } from "./previews.js";
 import {
@@ -25,19 +25,35 @@ export type PublishDeploymentInput = {
   path: string;
   slug?: string;
   port?: number;
+  staticDir?: string;
   workspaceId?: string;
   workspaceDirName?: string;
 };
+
+const MAX_STATIC_BYTES = 256 * 1024 * 1024;
+const MAX_STATIC_FILES = 20_000;
+const STATIC_SKIPPED_DIRS = new Set(["node_modules", ".git"]);
+const STATIC_ROOT_CANDIDATES = [".", "dist", "build", "out", "public", "_site"];
+const IDLE_SWEEP_INTERVAL_MS = 60_000;
 
 export class DeploymentManager {
   private readonly statePath: string;
   private readonly deploymentDir: string;
   private readonly locks = new Map<string, Promise<void>>();
+  private readonly lastActivity = new Map<string, number>();
 
   constructor(private readonly config: AppConfig) {
     this.deploymentDir = this.config.deploymentDir;
     this.statePath = join(this.deploymentDir, "deployments.json");
     mkdirSync(this.deploymentDir, { recursive: true });
+    for (const deployment of this.readState().deployments) {
+      if (deploymentKind(deployment) === "container") reservePort(deployment.hostPort);
+    }
+    if (this.config.deploy.idleMinutes > 0) {
+      setInterval(() => {
+        void this.sweepIdle().catch(() => {});
+      }, IDLE_SWEEP_INTERVAL_MS).unref();
+    }
   }
 
   async list(scope: DeploymentScope = {}): Promise<DeploymentRecord[]> {
@@ -49,35 +65,141 @@ export class DeploymentManager {
 
   async isRoutable(slug: string): Promise<boolean> {
     const deployment = await this.find(slug);
-    return deployment?.status === "running";
+    return deployment?.status === "running" || deployment?.status === "suspended";
   }
 
   async publish(input: PublishDeploymentInput): Promise<DeploymentRecord> {
     const projectPath = this.resolveProjectPath(input.path);
-    const dockerfile = join(projectPath, "Dockerfile");
-    if (!existsSync(dockerfile)) {
-      throw new Error(`Dockerfile not found in ${projectPath}. Ask the agent to add one, then publish again.`);
+    const staticRoot = this.resolveStaticRoot(projectPath, input.staticDir);
+    if (!staticRoot && !existsSync(join(projectPath, "Dockerfile"))) {
+      throw new Error(
+        `Nothing deployable found in ${projectPath}: no Dockerfile and no static site (index.html). ` +
+          `Add a Dockerfile for an app, or pass --static <dir> for a static site.`
+      );
     }
 
     const slug = slugify(input.slug || basename(projectPath));
     if (!slug) throw new Error("Deployment slug is required");
     if (isReservedDeploymentSlug(slug)) throw new Error(`Deployment slug is reserved: ${slug}`);
 
+    this.enforceQuota(slug, { workspaceId: input.workspaceId, workspaceDirName: input.workspaceDirName });
+
+    const shared = {
+      projectPath,
+      slug,
+      displayName: input.slug?.trim() || basename(projectPath),
+      workspaceId: input.workspaceId,
+      workspaceDirName: input.workspaceDirName
+    };
+
+    if (staticRoot) {
+      return this.withLock(slug, () => this.publishStaticUnlocked({ ...shared, staticRoot }));
+    }
+
     const containerPort = input.port ?? 3000;
     if (!Number.isInteger(containerPort) || containerPort < 1 || containerPort > 65535) {
       throw new Error(`Invalid container port: ${input.port}`);
     }
 
-    return this.withLock(slug, () =>
-      this.publishUnlocked({
-        projectPath,
-        slug,
-        containerPort,
-        displayName: input.slug?.trim() || basename(projectPath),
-        workspaceId: input.workspaceId,
-        workspaceDirName: input.workspaceDirName
-      })
-    );
+    return this.withLock(slug, () => this.publishUnlocked({ ...shared, containerPort }));
+  }
+
+  /**
+   * A static root is used when explicitly requested via --static, or when the project
+   * has no Dockerfile but a conventional directory containing index.html.
+   */
+  private resolveStaticRoot(projectPath: string, staticDir: string | undefined): string | undefined {
+    if (staticDir !== undefined) {
+      const trimmed = staticDir.trim().replace(/^\/+/, "");
+      const root = resolve(projectPath, trimmed || ".");
+      if (!this.pathIsInside(root, projectPath)) {
+        throw new Error("Static directory must be inside the project directory");
+      }
+      if (!existsSync(join(root, "index.html"))) {
+        throw new Error(`Static directory has no index.html: ${root}`);
+      }
+      return root;
+    }
+
+    if (existsSync(join(projectPath, "Dockerfile"))) return undefined;
+    for (const candidate of STATIC_ROOT_CANDIDATES) {
+      const root = resolve(projectPath, candidate);
+      if (existsSync(join(root, "index.html"))) return root;
+    }
+    return undefined;
+  }
+
+  private enforceQuota(slug: string, scope: DeploymentScope): void {
+    const max = this.config.deploy.maxPerWorkspace;
+    if (max <= 0) return;
+    const owned = this.readState().deployments.filter((entry) => this.matchesScope(entry, scope));
+    if (owned.some((entry) => entry.slug === slug)) return; // redeploying an existing slug is always allowed
+    if (owned.length >= max) {
+      throw new Error(
+        `Deployment limit reached (${max} per workspace). Remove an old deployment first, or redeploy an existing slug.`
+      );
+    }
+  }
+
+  private async claimSlug(slug: string, scope: DeploymentScope): Promise<DeploymentRecord | undefined> {
+    let existing = await this.find(slug);
+    if (existing && scope.workspaceId && !existing.workspaceId) {
+      if (this.matchesScope(existing, scope)) {
+        existing = { ...existing, workspaceId: scope.workspaceId };
+      } else if (existing.status === "running") {
+        throw new Error(`Deployment slug is already used by a legacy deployment: ${slug}`);
+      } else {
+        await this.removeArtifacts(existing);
+        this.deleteRecord(existing.slug);
+        existing = undefined;
+      }
+    }
+    if (!this.matchesScope(existing, scope)) {
+      throw new Error(`Deployment slug is already used by another workspace: ${slug}`);
+    }
+    return existing;
+  }
+
+  private async publishStaticUnlocked(input: {
+    projectPath: string;
+    slug: string;
+    staticRoot: string;
+    displayName: string;
+    workspaceId?: string;
+    workspaceDirName?: string;
+  }): Promise<DeploymentRecord> {
+    const now = new Date().toISOString();
+    const existing = await this.claimSlug(input.slug, {
+      workspaceId: input.workspaceId,
+      workspaceDirName: input.workspaceDirName
+    });
+
+    const version = Date.now().toString(36);
+    const destDir = join(this.deploymentDir, "static", input.slug, version);
+    copyStaticSite(input.staticRoot, destDir);
+
+    let deployment: DeploymentRecord = {
+      id: existing?.id ?? input.slug,
+      workspaceId: input.workspaceId,
+      slug: input.slug,
+      name: input.displayName,
+      projectPath: input.projectPath,
+      kind: "static",
+      image: "",
+      container: "",
+      containerPort: 0,
+      hostPort: 0,
+      staticDir: destDir,
+      urlPath: `/deploy/${input.slug}/`,
+      status: "running",
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      lastDeployAt: now
+    };
+    deployment = this.decorate(deployment);
+    this.upsert(deployment);
+    await this.removeArtifacts(existing);
+    return deployment;
   }
 
   private async publishUnlocked(input: {
@@ -89,22 +211,12 @@ export class DeploymentManager {
     workspaceDirName?: string;
   }): Promise<DeploymentRecord> {
     const now = new Date().toISOString();
-    let existing = await this.find(input.slug);
-    if (existing && input.workspaceId && !existing.workspaceId) {
-      if (this.matchesScope(existing, { workspaceId: input.workspaceId, workspaceDirName: input.workspaceDirName })) {
-        existing = { ...existing, workspaceId: input.workspaceId };
-      } else if (existing.status === "running") {
-        throw new Error(`Deployment slug is already used by a legacy deployment: ${input.slug}`);
-      } else {
-        await this.removeContainerAndImage(existing);
-        this.deleteRecord(existing.slug);
-        existing = undefined;
-      }
-    }
-    if (!this.matchesScope(existing, { workspaceId: input.workspaceId, workspaceDirName: input.workspaceDirName })) {
-      throw new Error(`Deployment slug is already used by another workspace: ${input.slug}`);
-    }
+    const existing = await this.claimSlug(input.slug, {
+      workspaceId: input.workspaceId,
+      workspaceDirName: input.workspaceDirName
+    });
     const hostPort = await allocatePort();
+    reservePort(hostPort);
     const version = Date.now().toString(36);
     const image = `localhost/agentmom/${input.slug}:${version}`;
     const container = `agentmom-${input.slug}-${version}`;
@@ -115,6 +227,7 @@ export class DeploymentManager {
       slug: input.slug,
       name: input.displayName,
       projectPath: input.projectPath,
+      kind: "container",
       image,
       container,
       containerPort: input.containerPort,
@@ -147,6 +260,14 @@ export class DeploymentManager {
         container,
         "--log-driver",
         "k8s-file",
+        "--memory",
+        `${this.config.deploy.memoryMb}m`,
+        "--cpus",
+        String(this.config.deploy.cpus),
+        "--pids-limit",
+        String(this.config.deploy.pidsLimit),
+        "--restart",
+        "on-failure:3",
         "--label",
         `agentmom.deployment=${input.slug}`,
         "--label",
@@ -168,11 +289,13 @@ export class DeploymentManager {
       };
       deployment = this.decorate(deployment);
       this.upsert(deployment);
-      await this.removeContainerAndImage(existing);
+      this.lastActivity.set(deployment.slug, Date.now());
+      await this.removeArtifacts(existing);
       return deployment;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.removeContainerAndImage({ container, image });
+      releasePort(hostPort);
       if (existing?.status === "running") {
         this.upsert({
           ...existing,
@@ -196,7 +319,8 @@ export class DeploymentManager {
     return this.withLock(slug, async () => {
       const deployment = await this.find(slug, scope);
       if (!deployment) return false;
-      await this.removeContainerAndImage(deployment);
+      await this.removeArtifacts(deployment);
+      this.lastActivity.delete(slug);
       const state = this.readState();
       state.deployments = state.deployments.filter((entry) => entry.slug !== slug);
       this.writeState(state);
@@ -207,7 +331,10 @@ export class DeploymentManager {
   async logs(slug: string, tail = 200, scope: DeploymentScope = {}): Promise<string> {
     const deployment = await this.find(slug, scope);
     if (!deployment) throw new Error(`Unknown deployment: ${slug}`);
-    if (deployment.status !== "running") {
+    if (deploymentKind(deployment) === "static") {
+      return "Static deployment; there is no runtime process or log.";
+    }
+    if (deployment.status !== "running" && deployment.status !== "suspended") {
       return [deployment.error, deployment.buildLog].filter(Boolean).join("\n").trim();
     }
     const result = await runCommand(
@@ -218,14 +345,84 @@ export class DeploymentManager {
     return result.output.trim();
   }
 
+  /** Stop container deployments that have not served a request within the idle window. */
+  async sweepIdle(): Promise<void> {
+    const cutoff = Date.now() - this.config.deploy.idleMinutes * 60_000;
+    for (const record of this.readState().deployments) {
+      if (deploymentKind(record) === "static" || record.status !== "running") continue;
+      if (this.lastActivityAt(record) > cutoff) continue;
+      await this.withLock(record.slug, async () => {
+        const current = this.readState().deployments.find((entry) => entry.slug === record.slug);
+        if (!current || current.status !== "running") return;
+        if (this.lastActivityAt(current) > cutoff) return;
+        await runCommand(this.config.podman.command, ["stop", "-t", "5", current.container], { allowFailure: true });
+        this.upsert({
+          ...current,
+          status: "suspended",
+          lastRequestAt: new Date(this.lastActivityAt(current) || Date.now()).toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      });
+    }
+  }
+
+  private lastActivityAt(record: DeploymentRecord): number {
+    const persisted = Date.parse(record.lastRequestAt ?? "") || Date.parse(record.updatedAt) || 0;
+    return Math.max(this.lastActivity.get(record.slug) ?? 0, persisted);
+  }
+
+  /** Start a suspended deployment's container and wait for it to serve. */
+  private async wake(slug: string): Promise<DeploymentRecord | undefined> {
+    return this.withLock(slug, async () => {
+      const current = await this.find(slug);
+      if (!current || current.status !== "suspended") return current;
+      try {
+        await runCommand(this.config.podman.command, ["start", current.container]);
+        await this.waitUntilReady(current.hostPort, current.container);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const failed: DeploymentRecord = {
+          ...current,
+          status: "stopped",
+          error: `Wake from suspend failed: ${truncateLog(message, 4000)}`,
+          updatedAt: new Date().toISOString()
+        };
+        this.upsert(failed);
+        return failed;
+      }
+      const woken: DeploymentRecord = {
+        ...current,
+        status: "running",
+        error: undefined,
+        lastRequestAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      this.upsert(woken);
+      this.lastActivity.set(slug, Date.now());
+      return woken;
+    });
+  }
+
   async fetch(
     slug: string,
     request: PreviewFetchRequest,
     mode: DeploymentRouteMode = "path"
   ): Promise<PreviewFetchResponse> {
-    const deployment = await this.find(slug);
+    let deployment = await this.find(slug);
     if (!deployment) {
       return textResponse(404, `Unknown deployment: ${slug}`);
+    }
+
+    if (deploymentKind(deployment) === "static") {
+      if (deployment.status !== "running") {
+        return textResponse(503, `Deployment is ${deployment.status}`);
+      }
+      return this.serveStatic(deployment, request, mode);
+    }
+
+    this.lastActivity.set(slug, Date.now());
+    if (deployment.status === "suspended") {
+      deployment = (await this.wake(slug)) ?? deployment;
     }
     if (deployment.status !== "running") {
       return textResponse(503, `Deployment is ${deployment.status}`);
@@ -299,10 +496,22 @@ export class DeploymentManager {
 
   private async reconcile(deployment: DeploymentRecord): Promise<DeploymentRecord> {
     const decorated = this.decorate(deployment);
-    if (decorated.status !== "running") return decorated;
+    if (deploymentKind(decorated) === "static" || decorated.status !== "running") return decorated;
 
-    const running = await this.containerIsRunning(decorated.container);
-    if (running) return decorated;
+    const state = await this.containerState(decorated.container);
+    if (state === "running") return decorated;
+
+    if (state === "stopped") {
+      // The container exists but is not running (host reboot, crash past the retry
+      // limit, manual stop). Treat it as suspended so the next request wakes it.
+      const suspended: DeploymentRecord = {
+        ...decorated,
+        status: "suspended",
+        updatedAt: new Date().toISOString()
+      };
+      this.upsert(suspended);
+      return suspended;
+    }
 
     const stopped: DeploymentRecord = {
       ...decorated,
@@ -314,13 +523,64 @@ export class DeploymentManager {
     return stopped;
   }
 
-  private async containerIsRunning(container: string): Promise<boolean> {
+  private async containerState(container: string): Promise<"running" | "stopped" | "missing"> {
     const result = await runCommand(
       this.config.podman.command,
       ["container", "inspect", "--format", "{{.State.Running}}", container],
       { allowFailure: true }
     );
-    return result.exitCode === 0 && result.output.trim() === "true";
+    if (result.exitCode !== 0) return "missing";
+    return result.output.trim() === "true" ? "running" : "stopped";
+  }
+
+  private async removeArtifacts(target: DeploymentRecord | undefined): Promise<void> {
+    if (!target) return;
+    await this.removeContainerAndImage(target);
+    if (deploymentKind(target) === "container") releasePort(target.hostPort);
+    if (target.staticDir && this.pathIsInside(target.staticDir, join(this.deploymentDir, "static"))) {
+      rmSync(target.staticDir, { recursive: true, force: true });
+    }
+  }
+
+  private serveStatic(
+    deployment: DeploymentRecord,
+    request: PreviewFetchRequest,
+    mode: DeploymentRouteMode
+  ): PreviewFetchResponse {
+    const root = deployment.staticDir;
+    if (!root || !existsSync(root)) {
+      return textResponse(503, "Static deployment files are missing; redeploy the site.");
+    }
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return textResponse(405, "Static deployments only serve GET requests");
+    }
+
+    let pathname: string;
+    try {
+      pathname = decodeURIComponent(request.path.split("?")[0].split("#")[0]);
+    } catch {
+      return textResponse(400, "Bad request path");
+    }
+
+    const filePath = resolveStaticFile(root, pathname);
+    if (!filePath) {
+      return textResponse(404, "Not found");
+    }
+
+    const body = readFileSync(filePath);
+    return rewriteDeploymentResponse(
+      deployment,
+      {
+        status: 200,
+        headers: {
+          "content-type": contentTypeFor(filePath),
+          "content-length": String(body.byteLength),
+          "cache-control": "no-cache"
+        },
+        body
+      },
+      mode
+    );
   }
 
   private async waitUntilReady(hostPort: number, container: string): Promise<void> {
@@ -427,6 +687,96 @@ export class DeploymentManager {
       }
     }
   }
+}
+
+function deploymentKind(record: DeploymentRecord): "container" | "static" {
+  return record.kind ?? "container";
+}
+
+function copyStaticSite(src: string, dest: string): void {
+  let bytes = 0;
+  let files = 0;
+  try {
+    cpSync(src, dest, {
+      recursive: true,
+      filter: (source) => {
+        const stats = lstatSync(source);
+        if (stats.isSymbolicLink()) return false;
+        if (stats.isDirectory()) return !STATIC_SKIPPED_DIRS.has(basename(source));
+        files += 1;
+        bytes += stats.size;
+        if (files > MAX_STATIC_FILES) {
+          throw new Error(`Static site has too many files (limit ${MAX_STATIC_FILES})`);
+        }
+        if (bytes > MAX_STATIC_BYTES) {
+          throw new Error(`Static site is too large (limit ${Math.round(MAX_STATIC_BYTES / 1024 / 1024)} MB)`);
+        }
+        return true;
+      }
+    });
+  } catch (error) {
+    rmSync(dest, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function resolveStaticFile(root: string, pathname: string): string | undefined {
+  const clean = normalize(pathname).replaceAll(/^[/\\]+/g, "");
+  const candidate = resolve(root, clean === "" || clean === "." ? "index.html" : clean);
+  const rel = relative(root, candidate);
+  if (rel.startsWith("..") || isAbsolute(rel) || rel.split(sep).includes("..")) return undefined;
+
+  if (existsSync(candidate)) {
+    const stats = statSync(candidate);
+    if (stats.isFile()) return candidate;
+    if (stats.isDirectory()) {
+      const index = join(candidate, "index.html");
+      return existsSync(index) && statSync(index).isFile() ? index : undefined;
+    }
+    return undefined;
+  }
+
+  // SPA-style fallback: extensionless paths render the site shell.
+  if (!extname(candidate)) {
+    const index = join(root, "index.html");
+    if (existsSync(index) && statSync(index).isFile()) return index;
+  }
+  return undefined;
+}
+
+const STATIC_CONTENT_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".htm": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json",
+  ".txt": "text/plain; charset=utf-8",
+  ".xml": "application/xml",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".ico": "image/x-icon",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".wasm": "application/wasm",
+  ".pdf": "application/pdf",
+  ".webmanifest": "application/manifest+json"
+};
+
+function contentTypeFor(filePath: string): string {
+  return STATIC_CONTENT_TYPES[extname(filePath).toLowerCase()] ?? "application/octet-stream";
 }
 
 function rewriteDeploymentResponse(

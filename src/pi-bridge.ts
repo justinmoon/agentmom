@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { getModel } from "@earendil-works/pi-ai";
@@ -34,9 +34,10 @@ import {
   saveMessageAttachments,
   userMessageAttachments
 } from "./message-attachments.js";
+import { ensureSkillRoots, skillRoots, toSkillSummary } from "./skills.js";
 import { SmolvmRuntime } from "./smolvm.js";
 import { allocatePort } from "./process-utils.js";
-import type { AppState, ChatMessage, MessageAttachment, SessionSummary, UiEvent } from "./types.js";
+import type { AppState, ChatMessage, MessageAttachment, SessionSummary, SkillSummary, UiEvent } from "./types.js";
 import { createWebSearchTool } from "./web-search.js";
 
 type PiMessage = UserMessage | AssistantMessage;
@@ -60,6 +61,9 @@ export class PiBridge {
   private autoPreviewServers = new Map<string, HttpServer>();
   private autoServing = false;
   private lastTurnStartedAt = 0;
+  private resourceLoader?: DefaultResourceLoader;
+  private skillWatchers: FSWatcher[] = [];
+  private skillReloadTimer?: NodeJS.Timeout;
 
   constructor(
     private readonly config: AppConfig,
@@ -124,6 +128,7 @@ export class PiBridge {
     mkdirSync(this.config.sessionDir, { recursive: true });
     mkdirSync(this.config.projectsDir, { recursive: true });
     mkdirSync(this.config.agentCwd, { recursive: true });
+    ensureSkillRoots(this.config);
     const previewCli = this.previews.cliInstall();
 
     const authStorage = AuthStorage.create(join(this.config.agentDir, "auth.json"));
@@ -149,6 +154,7 @@ export class PiBridge {
     const resourceLoader = new DefaultResourceLoader({
       cwd: this.config.agentCwd,
       agentDir: this.config.agentDir,
+      additionalSkillPaths: [skillRoots(this.config).projectAgent],
       appendSystemPromptOverride: (base) => [
         ...base,
         [
@@ -163,15 +169,25 @@ export class PiBridge {
           "",
           "## Agent Mom Deployments",
           "- When the user asks to deploy or publish, do it yourself with `mom deploy`.",
-          "- The project must have a Dockerfile. Make it listen on `$PORT`.",
+          "- Static sites (plain HTML/CSS/JS, or a built `dist`/`build` output) need NO Dockerfile: run `mom deploy --cwd <absolute-project-path> --slug <slug>` (add `--static <dir>` if the files are in a subdirectory). Prefer this for anything without a server.",
+          "- Apps with a server need a Dockerfile that listens on `$PORT`: `mom deploy --cwd <absolute-project-path> --port <port> --slug <slug>`.",
           "- In Dockerfiles, `EXPOSE` must be a literal port like `EXPOSE 3000`; do not write `EXPOSE $PORT`.",
-          "- All deploy args are required: `mom deploy --cwd <absolute-project-path> --port <port> --slug <slug>`.",
-          "- If you are in the project directory, use `mom deploy --cwd \"$PWD\" --port <port> --slug <slug>`.",
-          "- Deployment service errors are returned in command output; fix the Dockerfile/app and rerun deploy."
+          "- If you are in the project directory, use `--cwd \"$PWD\"`.",
+          "- App deployments are suspended after being idle and wake automatically on the next request; this is normal.",
+          "- Deployment service errors are returned in command output; fix the Dockerfile/app and rerun deploy.",
+          "",
+          "## Agent Mom Skills",
+          "- Skills are reusable instruction files. The user can invoke one explicitly by starting a message with `/skill:<name>`.",
+          `- When the user asks you to create a skill, write it to ${this.agentVisibleSkillsDir()}/<skill-name>/SKILL.md using your write tool.`,
+          "- SKILL.md must start with YAML frontmatter containing `name` (kebab-case, matching the directory name) and a one-line `description` of when to use the skill, followed by the markdown instructions.",
+          "- Put supporting scripts or reference files in the same skill directory and reference them with relative paths.",
+          "- When the user asks to change or improve a skill, edit the files in that same directory."
         ].join("\n")
       ]
     });
     await resourceLoader.reload();
+    this.resourceLoader = resourceLoader;
+    this.watchSkillDirs();
 
     const customTools = await this.prepareCustomTools(previewCli.guestBinDir);
 
@@ -265,6 +281,42 @@ export class PiBridge {
     return this.previews.fetch(id, request);
   }
 
+  listSkills(): SkillSummary[] {
+    const skills = this.resourceLoader?.getSkills().skills ?? [];
+    return skills.map((skill) => toSkillSummary(this.config, skill));
+  }
+
+  async refreshSkills(): Promise<AppState> {
+    await this.resourceLoader?.reload();
+    this.emit();
+    return this.snapshotSync();
+  }
+
+  private watchSkillDirs(): void {
+    if (this.skillWatchers.length > 0) return;
+    const roots = skillRoots(this.config);
+    // Watch the whole project .pi dir so both .pi/skills and .pi/agent/skills are covered.
+    for (const dir of [roots.workspace, resolve(roots.project, "..")]) {
+      try {
+        const watcher = watch(dir, { recursive: true }, () => this.scheduleSkillReload());
+        watcher.on("error", () => {});
+        this.skillWatchers.push(watcher);
+      } catch {
+        // Recursive fs.watch is unavailable on some platforms; agent_end reloads still cover it.
+      }
+    }
+  }
+
+  private scheduleSkillReload(): void {
+    clearTimeout(this.skillReloadTimer);
+    this.skillReloadTimer = setTimeout(() => {
+      void this.resourceLoader
+        ?.reload()
+        .then(() => this.emit())
+        .catch(() => {});
+    }, 300);
+  }
+
   async testRuntimeResume(): Promise<AppState> {
     if (this.config.executor !== "smolvm") {
       this.addEvent("runtime", "Resume test unavailable", "Current executor is local", true);
@@ -295,6 +347,9 @@ export class PiBridge {
   }
 
   dispose(): void {
+    clearTimeout(this.skillReloadTimer);
+    for (const watcher of this.skillWatchers) watcher.close();
+    this.skillWatchers = [];
     this.disposeCurrentSession();
     void this.smolvm?.dispose();
     this.disposePreviewProcesses();
@@ -308,7 +363,16 @@ export class PiBridge {
     this.session?.dispose();
     this.session = undefined;
     this.sessionManager = undefined;
+    this.resourceLoader = undefined;
     this.isRunning = false;
+  }
+
+  /** The project-local skills directory as the agent sees it (guest path when sandboxed). */
+  private agentVisibleSkillsDir(): string {
+    if (this.config.executor === "smolvm") {
+      return `${this.config.smolvm.guestWorkspace.replace(/\/+$/, "")}/.pi/skills`;
+    }
+    return join(this.config.agentCwd, ".pi", "skills");
   }
 
   private handleEvent(event: AgentSessionEvent): void {
@@ -318,7 +382,11 @@ export class PiBridge {
       this.addEvent("agent", "Turn started");
     } else if (event.type === "agent_end") {
       this.addEvent("agent", event.willRetry ? "Turn ended; retry pending" : "Turn ended");
-      if (!event.willRetry) void this.maybeAutoServePreview(this.lastTurnStartedAt);
+      if (!event.willRetry) {
+        void this.maybeAutoServePreview(this.lastTurnStartedAt);
+        // Guest writes through the VM mount may not surface fs.watch events on the host.
+        this.scheduleSkillReload();
+      }
     } else if (event.type === "message_start" || event.type === "message_update" || event.type === "message_end") {
       const message = event.message;
       if (message.role === "user" || message.role === "assistant") {
@@ -370,6 +438,7 @@ export class PiBridge {
         : undefined,
       sessions: this.sessionSummaries,
       previews: this.previews.list(),
+      skills: this.listSkills(),
       messages,
       events: this.events,
       isRunning: this.isRunning,
@@ -411,10 +480,18 @@ export class PiBridge {
       operations = createLocalBashOperations();
     }
 
+    // In the sandbox, make HOME the mounted workspace so convention paths like
+    // ~/.pi/skills land somewhere persistent, host-visible, and loaded — instead of
+    // vanishing into the VM disk under /root.
+    const commandPrefix =
+      this.config.executor === "smolvm"
+        ? `export HOME=${shellQuote(this.config.smolvm.guestWorkspace)} PATH=${shellQuote(guestBinDir)}:$PATH`
+        : `export PATH=${shellQuote(guestBinDir)}:$PATH`;
+
     return [
       createWebSearchTool(this.config),
       createBashToolDefinition(this.config.agentCwd, {
-        commandPrefix: `export PATH=${shellQuote(guestBinDir)}:$PATH`,
+        commandPrefix,
         operations: this.withPreviewRegistration(operations)
       }) as unknown as ToolDefinition
     ];
@@ -600,6 +677,7 @@ export class PiBridge {
         path: projectPath,
         slug: registration.slug,
         port: registration.port,
+        staticDir: registration.static,
         workspaceId: this.config.workspaceId,
         workspaceDirName: this.config.workspaceDirName
       });

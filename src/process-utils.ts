@@ -38,7 +38,27 @@ export function runCommand(
   });
 }
 
-export function allocatePort(): Promise<number> {
+// Ports that must not be handed out even though nothing is bound to them right now —
+// e.g. host ports of suspended deployment containers, which rebind on wake.
+const reservedPorts = new Set<number>();
+
+export function reservePort(port: number): void {
+  if (Number.isInteger(port) && port > 0) reservedPorts.add(port);
+}
+
+export function releasePort(port: number): void {
+  reservedPorts.delete(port);
+}
+
+export async function allocatePort(): Promise<number> {
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const port = await allocateOsPort();
+    if (!reservedPorts.has(port)) return port;
+  }
+  throw new Error("Could not allocate an unreserved host port");
+}
+
+function allocateOsPort(): Promise<number> {
   return new Promise((resolvePromise, reject) => {
     const server: Server = createServer();
     server.listen(0, "127.0.0.1", () => {

@@ -4,17 +4,26 @@ import {
   PanelRightClose,
   Plus,
   RefreshCw,
+  Sparkles,
   Trash2,
   X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PreviewService } from "../src/types.js";
+import type { PreviewService, SkillSummary } from "../src/types.js";
+import { SkillsPane } from "./skills-pane.js";
 import "./right-panel.css";
+
+type RightPanelTabType = "preview" | "skills";
 
 type RightPanelTab = {
   id: string;
-  type: "preview";
+  type: RightPanelTabType;
   title: string;
+};
+
+const TAB_TITLES: Record<RightPanelTabType, string> = {
+  preview: "Preview",
+  skills: "Skills"
 };
 
 const initialRightTabs: RightPanelTab[] = [
@@ -23,10 +32,16 @@ const initialRightTabs: RightPanelTab[] = [
 
 export function RightPanel({
   previews,
+  skills,
+  workspaceUrl,
+  focusSkill,
   onCollapse,
   onRemovePreview
 }: {
   previews: PreviewService[];
+  skills: SkillSummary[];
+  workspaceUrl: (path: string) => string;
+  focusSkill?: { name: string; nonce: number };
   onCollapse: () => void;
   onRemovePreview: (preview: PreviewService) => Promise<void>;
 }) {
@@ -36,6 +51,7 @@ export function RightPanel({
   const [activeTabId, setActiveTabId] = useState(initialRightTabs[0].id);
   const [newTabMenuOpen, setNewTabMenuOpen] = useState(false);
   const previousPreviewIds = useRef(new Set<string>());
+  const handledFocusNonce = useRef<number | undefined>(undefined);
 
   const selectedPreview = useMemo(
     () => previews.find((preview) => preview.id === selectedPreviewId) ?? previews[0],
@@ -71,10 +87,21 @@ export function RightPanel({
     setActiveTabId(id);
   }, [previews, tabs]);
 
-  function addTab(type: RightPanelTab["type"]) {
+  useEffect(() => {
+    if (!focusSkill || focusSkill.nonce === handledFocusNonce.current) return;
+    handledFocusNonce.current = focusSkill.nonce;
+    openTab("skills");
+  }, [focusSkill, tabs]);
+
+  function openTab(type: RightPanelTabType) {
+    const existing = tabs.find((tab) => tab.type === type);
+    if (existing) {
+      setActiveTabId(existing.id);
+      setNewTabMenuOpen(false);
+      return;
+    }
     const id = `${type}-${Date.now().toString(36)}`;
-    const tab = { id, type, title: "Preview" };
-    setTabs((current) => [...current, tab]);
+    setTabs((current) => [...current, { id, type, title: TAB_TITLES[type] }]);
     setActiveTabId(id);
     setNewTabMenuOpen(false);
   }
@@ -97,24 +124,28 @@ export function RightPanel({
     <aside className="right-panel">
       <div className="right-tabbar">
         <div className="right-tabs" role="tablist" aria-label="Right panel tabs">
-          {tabs.map((tab) => (
-            <div className={tab.id === activeTab?.id ? "right-tab active" : "right-tab"} key={tab.id}>
-              <button
-                type="button"
-                className="right-tab-select"
-                onClick={() => setActiveTabId(tab.id)}
-                role="tab"
-                aria-selected={tab.id === activeTab?.id}
-              >
-                <Monitor size={14} />
-                <span>{tab.title}</span>
-                <span className="right-tab-count">{previews.length}</span>
-              </button>
-              <button type="button" className="right-tab-close" title="Close tab" onClick={() => closeTab(tab.id)}>
-                <X size={12} />
-              </button>
-            </div>
-          ))}
+          {tabs.map((tab) => {
+            const TabIcon = tab.type === "skills" ? Sparkles : Monitor;
+            const count = tab.type === "skills" ? skills.length : previews.length;
+            return (
+              <div className={tab.id === activeTab?.id ? "right-tab active" : "right-tab"} key={tab.id}>
+                <button
+                  type="button"
+                  className="right-tab-select"
+                  onClick={() => setActiveTabId(tab.id)}
+                  role="tab"
+                  aria-selected={tab.id === activeTab?.id}
+                >
+                  <TabIcon size={14} />
+                  <span>{tab.title}</span>
+                  <span className="right-tab-count">{count}</span>
+                </button>
+                <button type="button" className="right-tab-close" title="Close tab" onClick={() => closeTab(tab.id)}>
+                  <X size={12} />
+                </button>
+              </div>
+            );
+          })}
         </div>
         <div className="right-tab-actions">
           <button
@@ -127,9 +158,13 @@ export function RightPanel({
           </button>
           {newTabMenuOpen && (
             <div className="new-tab-menu">
-              <button type="button" onClick={() => addTab("preview")}>
+              <button type="button" onClick={() => openTab("preview")}>
                 <Monitor size={14} />
                 <span>Preview</span>
+              </button>
+              <button type="button" onClick={() => openTab("skills")}>
+                <Sparkles size={14} />
+                <span>Skills</span>
               </button>
             </div>
           )}
@@ -140,14 +175,18 @@ export function RightPanel({
       </div>
 
       <div className="right-panel-body">
-        <PreviewPane
-          previews={previews}
-          selectedPreview={selectedPreview}
-          previewRefreshKey={previewRefreshKey}
-          onSelectPreview={setSelectedPreviewId}
-          onRefreshPreview={() => setPreviewRefreshKey((key) => key + 1)}
-          onRemovePreview={onRemovePreview}
-        />
+        {activeTab?.type === "skills" ? (
+          <SkillsPane skills={skills} workspaceUrl={workspaceUrl} focusSkillName={focusSkill?.name} />
+        ) : (
+          <PreviewPane
+            previews={previews}
+            selectedPreview={selectedPreview}
+            previewRefreshKey={previewRefreshKey}
+            onSelectPreview={setSelectedPreviewId}
+            onRefreshPreview={() => setPreviewRefreshKey((key) => key + 1)}
+            onRemovePreview={onRemovePreview}
+          />
+        )}
       </div>
     </aside>
   );

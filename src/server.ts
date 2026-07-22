@@ -27,6 +27,7 @@ import {
   serveStatic
 } from "./http-utils.js";
 import { ensureWorkspaceProjectPath, workspaceApiPath, workspacePreviewPath } from "./server-paths.js";
+import { createSkill, deleteSkill, listSkillFiles, readSkillFile, writeSkillFile } from "./skills.js";
 import { TelegramChannel } from "./telegram-channel.js";
 import {
   MAX_MESSAGE_ATTACHMENT_BYTES,
@@ -269,7 +270,7 @@ const server = createServer(async (req, res) => {
     if (workspaceRoute) {
       const workspace = authorizeWorkspace(req, workspaceRoute.workspaceId);
       const runtime = await runtimes.get(workspace);
-      return handleWorkspaceRoute(runtime, workspaceRoute.rest, url, req, res);
+      return await handleWorkspaceRoute(runtime, workspaceRoute.rest, url, req, res);
     }
 
     if (vite) {
@@ -365,6 +366,7 @@ async function handleWorkspaceRoute(
           path: scopedProjectPath,
           slug: body?.slug ? String(body.slug) : undefined,
           port: body?.port === undefined || body?.port === "" ? undefined : Number.parseInt(String(body.port), 10),
+          staticDir: typeof body?.static === "string" ? body.static : undefined,
           workspaceId: runtime.config.workspaceId,
           workspaceDirName: runtime.config.workspaceDirName
         })
@@ -402,6 +404,41 @@ async function handleWorkspaceRoute(
   const previewDelete = /^\/previews\/([^/]+)$/.exec(rest);
   if (previewDelete && req.method === "DELETE") {
     return sendJson(res, bridge.removePreview(decodeURIComponent(previewDelete[1])));
+  }
+
+  if (rest === "/skills" && req.method === "GET") {
+    return sendJson(res, { skills: bridge.listSkills() });
+  }
+
+  if (rest === "/skills" && req.method === "POST") {
+    const body = await readJson(req);
+    createSkill(runtime.config, String(body?.name ?? ""));
+    return sendJson(res, await bridge.refreshSkills());
+  }
+
+  if (rest === "/skills" && req.method === "DELETE") {
+    const baseDir = url.searchParams.get("baseDir") ?? "";
+    deleteSkill(runtime.config, baseDir);
+    return sendJson(res, await bridge.refreshSkills());
+  }
+
+  if (rest === "/skills/files" && req.method === "GET") {
+    const baseDir = url.searchParams.get("baseDir") ?? "";
+    return sendJson(res, { files: listSkillFiles(runtime.config, baseDir) });
+  }
+
+  if (rest === "/skills/file" && req.method === "GET") {
+    const path = url.searchParams.get("path") ?? "";
+    return sendJson(res, readSkillFile(runtime.config, path));
+  }
+
+  if (rest === "/skills/file" && req.method === "PUT") {
+    const body = await readJson(req);
+    if (typeof body?.path !== "string" || typeof body?.content !== "string") {
+      return sendJson(res, { error: "path and content are required" }, 400);
+    }
+    writeSkillFile(runtime.config, body.path, body.content);
+    return sendJson(res, await bridge.refreshSkills());
   }
 
   if (rest === "/messages" && req.method === "POST") {

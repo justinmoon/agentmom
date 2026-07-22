@@ -48,7 +48,8 @@ export type PreviewRegistration = RegisterPreviewInput & {
 export type DeploymentRegistration = {
   cwd: string;
   slug: string;
-  port: number;
+  port?: number;
+  static?: string;
 };
 
 type GuestFetcher = (port: number, request: PreviewFetchRequest) => Promise<PreviewFetchResponse>;

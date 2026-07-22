@@ -54,6 +54,7 @@ const emptyState: AppState = {
   sessionDir: "",
   sessions: [],
   previews: [],
+  skills: [],
   messages: [],
   events: [],
   isRunning: false,
@@ -72,6 +73,7 @@ function App() {
   const [state, setState] = useState<AppState>(emptyState);
   const [error, setError] = useState<string | undefined>();
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [focusSkill, setFocusSkill] = useState<{ name: string; nonce: number } | undefined>();
   const isAdminPage = window.location.pathname === "/admin";
   const isTelegramSettingsPage = window.location.pathname === "/settings/telegram";
 
@@ -200,6 +202,20 @@ function App() {
     }
     prevPreviewCount.current = previewCount;
   }, [previewCount]);
+
+  // Reveal the skills pane when a new skill appears (e.g. the agent just wrote one).
+  const prevSkillNames = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (!state.workspace) return;
+    const names = new Set(state.skills.map((skill) => skill.name));
+    const previous = prevSkillNames.current;
+    prevSkillNames.current = names;
+    if (!previous) return;
+    const added = state.skills.filter((skill) => !previous.has(skill.name));
+    if (added.length === 0) return;
+    setRightPanelOpen(true);
+    setFocusSkill({ name: added[added.length - 1].name, nonce: Date.now() });
+  }, [state.workspace, state.skills]);
 
   async function newSession() {
     setError(undefined);
@@ -360,13 +376,21 @@ function App() {
                   </div>
                 </div>
 
-                <AttachmentComposer isRunning={state.isRunning} onCancel={cancelTurn} onSend={sendMessage} />
+                <AttachmentComposer
+                  isRunning={state.isRunning}
+                  skills={state.skills}
+                  onCancel={cancelTurn}
+                  onSend={sendMessage}
+                />
               </ThreadPrimitive.Root>
             </section>
 
             <div className="right-panel-slot" hidden={!rightPanelOpen}>
               <RightPanel
                 previews={state.previews}
+                skills={state.skills}
+                workspaceUrl={workspaceUrl}
+                focusSkill={focusSkill}
                 onCollapse={() => setRightPanelOpen(false)}
                 onRemovePreview={removePreview}
               />

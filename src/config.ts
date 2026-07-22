@@ -33,6 +33,13 @@ export type AppConfig = {
   podman: {
     command: string;
   };
+  deploy: {
+    memoryMb: number;
+    cpus: number;
+    pidsLimit: number;
+    maxPerWorkspace: number;
+    idleMinutes: number;
+  };
   smolvm: {
     command: string;
     name: string;
@@ -204,6 +211,13 @@ export function loadConfig(options: LoadConfigOptions = {}): AppConfig {
       botToken: telegramBotToken
     },
     rootDir,
+    deploy: {
+      memoryMb: numberFromEnv("AGENTMOM_DEPLOY_MEMORY_MB", 512),
+      cpus: numberFromEnv("AGENTMOM_DEPLOY_CPUS", 1),
+      pidsLimit: numberFromEnv("AGENTMOM_DEPLOY_PIDS_LIMIT", 256),
+      maxPerWorkspace: numberFromEnv("AGENTMOM_DEPLOY_MAX_PER_WORKSPACE", 5),
+      idleMinutes: numberFromEnv("AGENTMOM_DEPLOY_IDLE_MINUTES", 15)
+    },
     podman: {
       command: process.env.AGENTMOM_PODMAN_COMMAND ?? "podman"
     },
