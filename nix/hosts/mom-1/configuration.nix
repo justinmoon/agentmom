@@ -13,6 +13,11 @@
     self.nixosModules.prodHost
   ];
 
+  # Decommissioning (todos/mom1-migration.md): prod moved to mom-stage-1 on
+  # 2026-07-21. Keep the service off so a reboot cannot revive a second prod
+  # (the telegram bot token only works on one host).
+  services.agentmomWeb.enable = lib.mkForce false;
+
   boot.loader.grub = {
     enable = true;
     device = "/dev/nvme1n1";

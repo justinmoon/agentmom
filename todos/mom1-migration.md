@@ -59,34 +59,41 @@ staging environment. End state: one box (current mom-stage-1 hardware,
       copied data — catalog, workspaces, and skills all load; ownership
       mapped correctly by name.
 
-### Phase 1 — cutover (maintenance window, ~15–30 min)
+### Phase 1 — cutover (DONE 2026-07-21)
 
-- [ ] Stop agentmom on mom-1; stop all smolvm machines; disable the
-      service (`systemctl disable --now`) so nothing revives it.
-- [ ] Wipe stage's old `/data/agentmom-web/{app,workspace}`; final
-      `rsync -a --delete` of both dirs from mom-1.
-- [ ] Switch mom-stage-1 to the prodHost module (agentmom.xyz domains),
-      drop AGENTMOM_TELEGRAM_DISABLED, deploy, restart agentmom.
-- [ ] User: flip DNS — `agentmom.xyz` A and `*.agentmom.xyz` →
-      135.181.179.143.
-- [ ] Verify (see checklist in notes): health, login as real user,
-      agent turn in a workspace, skills list/picker, preview, static +
-      container deploy, TLS on a deployment subdomain, telegram message.
-- [ ] Leave mom-1's agentmom stopped+disabled (stale-DNS visitors get
-      connection errors, not a split-brain second prod).
+- [x] mom-1: agentmom stopped, all 13 smolvm machines stopped, service
+      durably removed via `services.agentmomWeb.enable = mkForce false`
+      + colmena apply (runtime `systemctl disable` is impossible on
+      NixOS). Also removed a stale pre-colmena runtime unit at
+      /run/systemd/system/agentmom.service (/srv/agentmom relic) that
+      crash-looped once the nix unit disappeared.
+- [x] Final rsync (delta ~2MB, seconds).
+- [x] mom-stage-1 switched to prodHost module, telegram enabled, memory
+      cap kept.
+- [x] DNS flipped by user (Cloudflare, both records, DNS only).
+- [x] Verified: TLS issued for agentmom.xyz after DNS propagated (first
+      attempts failed while LE still saw the old IP — a caddy reload
+      retried successfully); health ok; /api/me 401; correct bundle;
+      bogus deploy subdomain refused a cert (on-demand TLS gate works);
+      telegram polling as @agentmom_bot on the new host only.
+      Pending user spot-check: login + agent turn + telegram message.
 
 ### Phase 2 — simplify & decommission
 
-- [ ] Flake cleanup on master: single prod node (keep machine name
-      mom-stage-1 or rename later), delete mom-1 node, delete
-      `deploy-stage`/`check-stage`/`fleet-*-stage` recipes, update
-      `prod_host`.
-- [ ] Watch memory/latency on the new box for ~1 week.
-- [ ] Archive final mom-1 data snapshot somewhere off-box; resolve
-      `/data/android`; cancel the mom-1 server.
-- [ ] Update home-manager ssh config: tailscale names for the surviving
-      host (mom-1 entry currently pins the public IP; it's a read-only
-      home-manager symlink so must be fixed in that repo).
+- [x] justfile: single prod host (mom-stage-1), stage recipes deleted,
+      smoke-skills recipe added. Flake: mom-1 tagged old-prod with
+      tailscale-IP targetHost; mom-stage-1 tagged prod.
+- [x] /data/android deleted (user decision, 288G freed).
+- [ ] Watch memory/latency on the new box for ~1 week
+      (baseline 2026-07-21: 1.9G used / 60G available, VMs cold).
+- [ ] Archive a final /data/agentmom-web snapshot off-box, then cancel
+      the mom-1 server and remove its node from flake + secrets.nix.
+- [ ] Update home-manager ssh config: mom-1 alias pins the public IP
+      (unreachable from some networks); make sure the surviving host's
+      alias uses tailscale. (Read-only symlink — fix in the home-manager
+      repo.)
+- [ ] After decommission: rename host/machine references if desired
+      (the mom-stage-1 name is now cosmetic).
 
 ## Implementation Notes
 

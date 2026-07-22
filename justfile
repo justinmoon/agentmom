@@ -1,7 +1,6 @@
 set dotenv-load := false
 
-prod_host := "mom-1"
-stage_host := "mom-stage-1"
+prod_host := "mom-stage-1"
 
 dev:
     nix develop -c npm run dev
@@ -30,6 +29,9 @@ smoke-web-search:
 smoke-session-switch:
     nix develop -c npm run smoke:session-switch
 
+smoke-skills:
+    nix develop -c npm run smoke:skills
+
 smoke-local:
     nix develop -c npm run smoke:local
 
@@ -46,16 +48,10 @@ start:
     nix develop -c npm run start
 
 fleet-build-prod:
-    nix develop -c colmena build --on mom-1
-
-fleet-build-stage:
-    nix develop -c colmena build --on mom-stage-1
+    nix develop -c colmena build --on {{prod_host}}
 
 fleet-status-prod:
-    nix develop -c colmena exec --on mom-1 -- systemctl --no-pager --failed
-
-fleet-status-stage:
-    nix develop -c colmena exec --on mom-stage-1 -- systemctl --no-pager --failed
+    nix develop -c colmena exec --on {{prod_host}} -- systemctl --no-pager --failed
 
 check-prod:
     #!/usr/bin/env bash
@@ -90,45 +86,7 @@ check-prod:
     echo "prod check ok"
     REMOTE
 
-check-stage:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    ssh {{stage_host}} 'bash -se' <<'REMOTE'
-    set -euo pipefail
-
-    for attempt in $(seq 1 60); do
-      health_json="$(curl -fsS http://127.0.0.1:7392/api/health || true)"
-      if [[ "${health_json}" == *'"ok":true'* ]]; then
-        echo "${health_json}"
-        break
-      fi
-      if [[ "${attempt}" == "60" ]]; then
-        echo "agentmom health check failed" >&2
-        [[ -n "${health_json}" ]] && echo "${health_json}" >&2
-        sudo systemctl status agentmom --no-pager -n 80 >&2 || true
-        exit 1
-      fi
-      sleep 1
-    done
-
-    me_status="$(curl -sS -o /tmp/agentmom-deploy-me.json -w '%{http_code}' http://127.0.0.1:7392/api/me)"
-    if [[ "${me_status}" != "401" ]]; then
-      echo "expected unauthenticated /api/me to return 401, got ${me_status}" >&2
-      cat /tmp/agentmom-deploy-me.json >&2
-      exit 1
-    fi
-    grep -q '"authEnabled":true' /tmp/agentmom-deploy-me.json
-
-    echo "stage deploy ok"
-    REMOTE
-
-deploy-stage:
-    nix develop -c colmena apply --on mom-stage-1
-    nix develop -c colmena exec --on mom-stage-1 -- sudo systemctl restart agentmom
-    just check-stage
-
 deploy-prod:
-    nix develop -c colmena apply --on mom-1
-    nix develop -c colmena exec --on mom-1 -- sudo systemctl restart agentmom
+    nix develop -c colmena apply --on {{prod_host}}
+    nix develop -c colmena exec --on {{prod_host}} -- sudo systemctl restart agentmom
     just check-prod

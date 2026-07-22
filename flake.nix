@@ -101,16 +101,20 @@
           specialArgs = { inherit self; };
         };
 
+        # Decommissioning after the 2026-07-21 migration; service disabled.
+        # Tailscale IP because the "mom-1" ssh alias pins the public IP,
+        # which is not reachable from every network.
         mom-1 = mkColmenaNode {
           module = ./nix/hosts/mom-1/configuration.nix;
-          targetHost = "mom-1";
-          tags = [ "agentmom" "prod" ];
+          targetHost = "100.118.64.112";
+          tags = [ "agentmom" "old-prod" ];
         };
 
+        # The production host (agentmom.xyz) since 2026-07-21.
         mom-stage-1 = mkColmenaNode {
           module = ./nix/hosts/mom-stage-1/configuration.nix;
           targetHost = "mom-stage-1";
-          tags = [ "agentmom" "stage" ];
+          tags = [ "agentmom" "prod" ];
         };
       };
     };
