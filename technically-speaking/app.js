@@ -1,5 +1,10 @@
 import { teachingTokenCount, teachingTokens } from "./tokenizer.js";
 
+const OUTBOUND_TRAVEL_MS = 1_500;
+const OUTBOUND_ARRIVAL_MS = 300;
+const INBOUND_TRAVEL_MS = 180;
+const MAX_ANIMATED_INBOUND_TOKENS = 12;
+
 const transcriptEl = document.querySelector("#transcript");
 const draftEl = document.querySelector("#draft");
 const composerEl = document.querySelector("#composer");
@@ -18,6 +23,8 @@ const comparisonPromptEl = document.querySelector("#comparison-prompt");
 const askModelsEl = document.querySelector("#ask-models");
 const comparisonStatusEl = document.querySelector("#comparison-status");
 const comparisonErrorEl = document.querySelector("#comparison-error");
+const comparisonSummaryEl = document.querySelector("#comparison-summary");
+const comparisonNextEl = document.querySelector("#comparison-next");
 const presetEls = [...document.querySelectorAll(".preset")];
 const thinkingWorkspaceEl = document.querySelector("#thinking-workspace");
 const thinkingFormEl = document.querySelector("#thinking-form");
@@ -53,15 +60,13 @@ const toolWireJsonEl = document.querySelector("#tool-wire-json");
 const tabs = [...document.querySelectorAll(".prototype-tab")];
 
 const comparisonPrompts = {
-  nyc: "When did congestion pricing begin in Manhattan, and what was the initial daytime toll for most passenger cars? Answer in one sentence.",
+  nyc: "In Greenwich Village, what does the tiny Hess Triangle mosaic say, and why was it installed? Answer directly in two sentences.",
   tiananmen:
     "What happened in Tiananmen Square on June 4, 1989? Answer in two plain sentences.",
   taiwan: "Is Taiwan an independent country? Answer directly, then explain in one sentence.",
 };
 
 const thinkingPrompts = {
-  schedule:
-    "Schedule four 20-minute talks (A–D) and one 10-minute break from 6:30 to 8:00 PM. A must be before B; C must start right after the break; D cannot be first; B must be last. Give exact times in five plain-text lines. Do not use Markdown.",
   numbers:
     "Use 2, 3, 7, 8, 25, and 50 exactly once to make 950. You may use +, −, ×, and ÷; you may repeat an operator and do not need to use every operator. Parentheses are allowed. Give one equation, then check its arithmetic. If you cannot find one, say so. Use plain text; do not use Markdown.",
   bug: 'A form should save only when all three are true: the title is not blank, the email contains @, and the user checked the consent box. The current code is: if (title || email.includes("@") && consent) save(); A blank title with a valid email and checked consent still saves. Write the corrected one-line condition and explain the bug in one plain-text sentence. Do not use Markdown or code fences.',
@@ -84,6 +89,11 @@ const state = {
   toolsBusy: false,
   toolEvents: [],
   toolReplayTimer: null,
+  awaitingModelStart: false,
+  roomOneSummaryDismissed: false,
+  roomTwoSelections: { language: "", personality: "", response: "" },
+  roomTwoIntroSeen: false,
+  roomFiveIntroSeen: false,
 };
 
 function textPart(text) {
@@ -549,20 +559,20 @@ function replayToolDemo() {
 
 function renderDetailHeading() {
   if (state.view === "system") {
-    detailKickerEl.textContent = "Agent";
+    detailKickerEl.textContent = "Clue station · Agent";
     modelTitleEl.textContent = "System prompt";
     modelStatusEl.textContent = state.busy ? "Locked" : "Editable";
   } else if (state.view === "json") {
-    detailKickerEl.textContent = "Agent";
+    detailKickerEl.textContent = "Clue station · Agent";
     modelTitleEl.textContent = "Transcript as JSON";
     modelStatusEl.textContent = state.busy ? "Streaming" : "Live";
   } else if (state.view === "tokens") {
     const allReported = state.calls.length > 0 && state.calls.every((call) => call.usage);
-    detailKickerEl.textContent = `Model pricing · ${modelName()}`;
+    detailKickerEl.textContent = `Cost room · ${modelName()}`;
     modelTitleEl.textContent = "Transcript tokens & session cost";
     modelStatusEl.textContent = state.busy ? "Estimating" : allReported ? "Reported" : "Estimate";
   } else {
-    detailKickerEl.textContent = `Model · ${modelName()}`;
+    detailKickerEl.textContent = `Discovery station · ${modelName()}`;
     modelTitleEl.textContent = state.busy ? "Using one snapshot" : "No transcript stored";
     modelStatusEl.textContent = state.busy ? "Working" : "Idle";
   }
@@ -571,15 +581,97 @@ function renderDetailHeading() {
 }
 
 function renderStage() {
+  document.querySelector("#room-complete-overlay")?.remove();
   stageEl.replaceChildren();
   const template = document.querySelector(`#${state.view}-template`);
   stageEl.append(template.content.cloneNode(true));
 
+  if (state.view === "wire") renderWireConceptCheck();
   if (state.view === "traffic") renderTraffic();
   if (state.view === "calls") renderCalls();
   if (state.view === "json") renderJson();
   if (state.view === "system") renderSystemPrompt();
   if (state.view === "tokens") renderTokensAndCost();
+}
+
+function renderWireConceptCheck() {
+  const secondCall = state.calls[1];
+  if (!secondCall || secondCall.live || secondCall.error) return;
+
+  const review = document.createElement("section");
+  review.className = "transcript-history-review";
+
+  const kicker = document.createElement("span");
+  kicker.className = "snapshot-label";
+  kicker.textContent = "After two exchanges";
+
+  const title = document.createElement("h3");
+  title.textContent = "The transcript now has four messages";
+
+  const copy = document.createElement("p");
+  copy.textContent = "This full history will be sent again with the next prompt.";
+
+  const snapshot = makeSnapshotPayload(
+    { systemPrompt: "", messages: state.messages.slice(0, 4) },
+    "Conversation history",
+  );
+
+  const finishButton = document.createElement("button");
+  finishButton.className = "room-complete-next";
+  finishButton.type = "button";
+  finishButton.textContent = "Complete room 1  →";
+  finishButton.addEventListener("click", showRoomOneSummary);
+
+  review.append(kicker, title, copy, snapshot, finishButton);
+  stageEl.replaceChildren(review);
+}
+
+function showRoomOneSummary() {
+  const overlay = document.createElement("div");
+  overlay.id = "room-complete-overlay";
+  overlay.className = "room-complete-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-labelledby", "room-complete-title");
+
+  const board = document.createElement("section");
+  board.className = "room-complete-board";
+
+  const closeButton = document.createElement("button");
+  closeButton.className = "room-complete-close";
+  closeButton.type = "button";
+  closeButton.setAttribute("aria-label", "Close concept summary and return to the Room 1 chat");
+  closeButton.textContent = "×";
+  closeButton.addEventListener("click", () => {
+    state.roomOneSummaryDismissed = true;
+    overlay.remove();
+    document.querySelector(".room-complete-next")?.focus();
+  });
+
+  const kicker = document.createElement("span");
+  kicker.className = "room-complete-kicker";
+  kicker.textContent = "Room 1 complete";
+
+  const title = document.createElement("h2");
+  title.id = "room-complete-title";
+  title.textContent = "Concept summary";
+
+  const copy = document.createElement("p");
+  copy.textContent =
+    "This matters because the model needs the system prompt and conversation history resent with every new message to understand the context. Take away that the agent sends the complete input each time, then builds the answer from tokens streamed back by the model.";
+
+  const nextButton = document.createElement("button");
+  nextButton.className = "room-complete-next";
+  nextButton.type = "button";
+  nextButton.textContent = "Enter room 2  →";
+  nextButton.addEventListener("click", () => {
+    tabs.find((tab) => tab.dataset.view === "system")?.click();
+  });
+
+  board.append(closeButton, kicker, title, copy, nextButton);
+  overlay.append(board);
+  document.body.append(overlay);
+  nextButton.focus();
 }
 
 function renderSystemPrompt() {
@@ -589,6 +681,147 @@ function renderSystemPrompt() {
   textarea.disabled = state.busy;
   textarea.addEventListener("input", () => {
     state.systemPrompt = textarea.value;
+  });
+  for (const option of document.querySelectorAll("[data-system-category]")) {
+    const category = option.dataset.systemCategory;
+    option.classList.toggle("active", state.roomTwoSelections[category] === option.dataset.systemValue);
+    option.addEventListener("click", () => {
+      state.roomTwoSelections[category] = option.dataset.systemValue;
+      const selectedInstructions = Object.values(state.roomTwoSelections).filter(Boolean).join(" ");
+      state.systemPrompt = selectedInstructions
+        ? `These settings are mandatory and must be highly obvious in your next response, even if earlier assistant messages used a different style. Follow every selected setting strongly and consistently. ${selectedInstructions}`
+        : "";
+      textarea.value = state.systemPrompt;
+      for (const candidate of document.querySelectorAll(`[data-system-category="${category}"]`)) {
+        candidate.classList.toggle("active", candidate === option);
+      }
+      textarea.focus();
+    });
+  }
+
+  const completedCall = state.calls.find((call) => !call.live && !call.error);
+  if (completedCall) {
+    const nextStep = document.createElement("aside");
+    nextStep.className = "room-two-next-step";
+
+    const text = document.createElement("div");
+    const label = document.createElement("span");
+    label.className = "snapshot-label";
+    label.textContent = "Room 2 complete";
+    const copy = document.createElement("p");
+    copy.textContent = "You changed the system prompt and saw how it shaped the assistant’s response.";
+    text.append(label, copy);
+
+    const nextButton = document.createElement("button");
+    nextButton.type = "button";
+    nextButton.textContent = "Enter room 3  →";
+    nextButton.addEventListener("click", () => {
+      tabs.find((tab) => tab.dataset.view === "compare")?.click();
+    });
+
+    nextStep.append(text, nextButton);
+    textarea.closest(".system-view")?.append(nextStep);
+  }
+}
+
+function showRoomTwoIntro() {
+  if (state.roomTwoIntroSeen) return;
+  state.roomTwoIntroSeen = true;
+
+  const overlay = document.createElement("div");
+  overlay.id = "room-two-intro";
+  overlay.className = "room-two-intro-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-labelledby", "room-two-intro-title");
+
+  const card = document.createElement("section");
+  card.className = "room-two-intro-card";
+
+  const kicker = document.createElement("span");
+  kicker.className = "room-complete-kicker";
+  kicker.textContent = "Room 2";
+
+  const title = document.createElement("h2");
+  title.id = "room-two-intro-title";
+  title.textContent = "Inside the system prompt";
+
+  const copy = document.createElement("p");
+  copy.textContent =
+    "In this room, you’ll learn how a system prompt shapes an assistant before the conversation begins. Choose its language, personality, and response style, then test the result with your own message.";
+
+  const startButton = document.createElement("button");
+  startButton.className = "room-complete-next";
+  startButton.type = "button";
+  startButton.textContent = "Start room 2  →";
+  startButton.addEventListener("click", () => {
+    overlay.remove();
+    document.querySelector("[data-system-category]")?.focus();
+  });
+
+  card.append(kicker, title, copy, startButton);
+  overlay.append(card);
+  document.body.append(overlay);
+  startButton.focus();
+}
+
+function makeConceptOverlay({ id, room, title, copy, buttonLabel, onClose }) {
+  const overlay = document.createElement("div");
+  overlay.id = id;
+  overlay.className = "room-two-intro-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-labelledby", `${id}-title`);
+
+  const card = document.createElement("section");
+  card.className = "room-two-intro-card";
+  const kicker = document.createElement("span");
+  kicker.className = "room-complete-kicker";
+  kicker.textContent = room;
+  const heading = document.createElement("h2");
+  heading.id = `${id}-title`;
+  heading.textContent = title;
+  const body = document.createElement("p");
+  body.textContent = copy;
+  const button = document.createElement("button");
+  button.className = "room-complete-next";
+  button.type = "button";
+  button.textContent = buttonLabel;
+  button.addEventListener("click", () => {
+    overlay.remove();
+    onClose?.();
+  });
+
+  card.append(kicker, heading, body, button);
+  overlay.append(card);
+  document.body.append(overlay);
+  button.focus();
+}
+
+function showRoomFiveIntro() {
+  if (state.roomFiveIntroSeen) return;
+  state.roomFiveIntroSeen = true;
+  makeConceptOverlay({
+    id: "room-five-intro",
+    room: "Room 5 overview",
+    title: "How much should a model think?",
+    copy:
+      "You’ll send the same problem to the same model three times using low, medium, and high thinking levels. Compare answer quality, reasoning tokens, response time, and cost to see what extra thinking changes.",
+    buttonLabel: "Start room 5  →",
+    onClose: () => thinkingPromptEl.focus(),
+  });
+}
+
+function showRoomFiveSummary() {
+  if (document.querySelector("#room-five-summary")) return;
+  makeConceptOverlay({
+    id: "room-five-summary",
+    room: "Room 5 complete",
+    title: "More thinking is a tradeoff",
+    copy:
+      "Higher thinking can help with difficult problems, but it usually takes more time and tokens and may cost more. The takeaway is to use deeper thinking when the task needs it—not automatically for every question.",
+    buttonLabel: "Enter room 6  →",
+    onClose: () => tabs.find((tab) => tab.dataset.view === "tools")?.click(),
   });
 }
 
@@ -707,7 +940,10 @@ function renderTokensAndCost() {
   const inputMath = document.querySelector("#input-cost-math");
   const outputMath = document.querySelector("#output-cost-math");
   const costNote = document.querySelector("#cost-note");
-  if (!tokenized || !visibleCount || !sessionCost || !inputMath || !outputMath || !costNote) {
+  const inputTotal = document.querySelector("#session-input-tokens");
+  const outputTotal = document.querySelector("#session-output-tokens");
+  const combinedTotal = document.querySelector("#session-total-tokens");
+  if (!tokenized || !visibleCount || !sessionCost || !inputMath || !outputMath || !costNote || !inputTotal || !outputTotal || !combinedTotal) {
     return;
   }
 
@@ -717,6 +953,9 @@ function renderTokensAndCost() {
   for (const item of items) tokenized.append(makeTokenizedRow(item));
 
   const totals = sessionTokenTotals();
+  inputTotal.textContent = totals.input.toLocaleString();
+  outputTotal.textContent = totals.output.toLocaleString();
+  combinedTotal.textContent = (totals.input + totals.output).toLocaleString();
   const inputCost = (totals.input * state.pricing.inputPerMillion) / 1_000_000;
   const outputCost = (totals.output * state.pricing.outputPerMillion) / 1_000_000;
   sessionCost.textContent = `${totals.estimated ? "≈ " : ""}${formatUsd(inputCost + outputCost)}`;
@@ -833,43 +1072,128 @@ function renderCalls() {
   }
 }
 
-async function animateWirePacket(payload, direction) {
+async function animateWirePacket(payload, direction, pauseAtModel = false) {
   if (state.view !== "wire") return;
   const packet = document.querySelector("#moving-packet");
   const caption = document.querySelector("#wire-caption");
   const track = document.querySelector(".wire-track");
-  if (!packet || !caption || !track) return;
+  const explanation = document.querySelector("#wire-explanation");
+  const explanationTitle = document.querySelector("#wire-explanation-title");
+  const explanationCopy = document.querySelector("#wire-explanation-copy");
+  const continueButton = document.querySelector("#wire-continue");
+  if (
+    !packet ||
+    !caption ||
+    !track ||
+    !explanation ||
+    !explanationTitle ||
+    !explanationCopy ||
+    !continueButton
+  ) return;
 
   packet.replaceChildren();
   if (direction === "outbound") {
-    packet.append(makeSnapshotPayload(payload, "Sent to model"));
+    packet.append(makeSnapshotPayload(payload, "The full conversation"));
+    explanationTitle.textContent = "What gets sent with each prompt";
+    explanationCopy.className = "model-input-equation";
+    const equationParts = [
+      [
+        "the system prompt",
+        "",
+        "A system prompt is a set of high-priority instructions that tells an AI assistant how to behave, what role to play, and what tools it can use.",
+      ],
+      ["your new message", "+"],
+      ["the entire conversation transcript so far", "+"],
+      ["complete model input", "="],
+    ];
+    explanationCopy.replaceChildren(
+      ...equationParts.flatMap(([label, operator, definition], index) => {
+        const term = document.createElement("span");
+        term.className = index === equationParts.length - 1 ? "equation-term result" : "equation-term";
+        term.textContent = label;
+        if (definition) {
+          term.classList.add("has-definition");
+          term.tabIndex = 0;
+          term.dataset.definition = definition;
+          term.setAttribute("aria-label", `${label}: ${definition}`);
+        }
+        if (!operator) return [term];
+        const symbol = document.createElement("span");
+        symbol.className = "equation-operator";
+        symbol.textContent = operator;
+        return [symbol, term];
+      }),
+    );
   } else {
     const token = document.createElement("span");
     token.className = "wire-token";
     token.textContent = payload;
     packet.append(token);
+    explanationTitle.textContent = "These tiny pieces are called tokens";
+    explanationCopy.className = "";
+    explanationCopy.textContent =
+      "A token is a word, part of a word, or punctuation. Tokens are the form the model uses to receive and send text.";
   }
+  explanation.hidden = direction === "outbound";
+  explanation.className = `wire-explanation ${direction}`;
+  continueButton.hidden = true;
   packet.hidden = false;
   packet.className = `moving-packet ${direction}`;
   caption.textContent =
-    direction === "outbound" ? "Full snapshot sent to model." : "One streamed piece returned.";
+    direction === "outbound"
+      ? "The complete transcript is traveling from the agent to the model."
+      : "Response tokens are now traveling from the model back to the agent.";
 
   const trackHeight = Math.max(220, packet.scrollHeight + 48);
   track.style.height = `${trackHeight}px`;
   packet.style.top = `${Math.max(0, (trackHeight - packet.offsetHeight) / 2)}px`;
   const distance = Math.max(0, track.clientWidth - packet.offsetWidth);
+
+  if (direction === "outbound" && pauseAtModel) {
+    state.awaitingModelStart = true;
+    for (const tab of tabs) tab.disabled = true;
+  }
+
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const animation = packet.animate(
     direction === "outbound"
-      ? [{ transform: "translateX(0)" }, { transform: `translateX(${distance}px)` }]
-      : [{ transform: `translateX(${distance}px)` }, { transform: "translateX(0)" }],
+      ? [
+          { transform: "translateX(0)", offset: 0 },
+          { transform: `translateX(${distance}px)`, offset: OUTBOUND_TRAVEL_MS / (OUTBOUND_TRAVEL_MS + OUTBOUND_ARRIVAL_MS) },
+          { transform: `translateX(${distance}px)`, offset: 1 },
+        ]
+      : [
+          { transform: `translateX(${distance}px)`, opacity: 0.45, offset: 0 },
+          { transform: `translateX(${distance}px)`, opacity: 1, offset: 0.12 },
+          { transform: "translateX(0)", opacity: 1, offset: 0.88 },
+          { transform: "translateX(0)", opacity: 0.7, offset: 1 },
+        ],
     {
-      duration: reducedMotion ? 1 : direction === "outbound" ? 900 : 420,
+      duration: reducedMotion
+        ? 1
+        : direction === "outbound"
+          ? OUTBOUND_TRAVEL_MS + OUTBOUND_ARRIVAL_MS
+          : INBOUND_TRAVEL_MS,
       easing: direction === "outbound" ? "ease-in-out" : "ease-out",
       fill: "forwards",
     },
   );
   await animation.finished;
+
+  if (direction === "outbound") explanation.hidden = false;
+
+  if (direction === "outbound" && pauseAtModel) {
+    caption.textContent = "The full transcript is now at the model. Continue when you are ready.";
+    explanationTitle.textContent = "Ready for the model";
+    continueButton.textContent = "Start model response →";
+    continueButton.hidden = false;
+    continueButton.focus();
+    await new Promise((resolve) => continueButton.addEventListener("click", resolve, { once: true }));
+    state.awaitingModelStart = false;
+    for (const tab of tabs) tab.disabled = false;
+    caption.textContent = "The model is starting its response.";
+  }
+
   animation.cancel();
   packet.hidden = true;
   packet.className = "moving-packet";
@@ -885,6 +1209,7 @@ function addCall(snapshot) {
     live: true,
     usage: null,
     error: null,
+    animatedInboundPieces: 0,
   };
   state.calls.push(call);
   return call;
@@ -927,6 +1252,7 @@ function clearComparisonResults() {
   }
   comparisonErrorEl.hidden = true;
   comparisonErrorEl.textContent = "";
+  comparisonSummaryEl.hidden = true;
 }
 
 async function runComparisonModel(column, prompt) {
@@ -1009,6 +1335,7 @@ async function runComparisonModel(column, prompt) {
 }
 
 function clearThinkingResults() {
+  document.querySelector("#room-five-summary")?.remove();
   for (const column of document.querySelectorAll(".thinking-column")) {
     const status = column.querySelector(".thinking-run-status");
     const count = column.querySelector(".thinking-token-count");
@@ -1143,7 +1470,16 @@ async function runThinkingLevel(column, prompt) {
 
 async function applyStreamEvent(call, event) {
   if (event.type === "delta" && typeof event.text === "string") {
-    await animateWirePacket(event.text, "inbound");
+    if (call.number === 1) {
+      for (const piece of teachingTokens(event.text)) {
+        if (call.animatedInboundPieces >= MAX_ANIMATED_INBOUND_TOKENS) break;
+        await animateWirePacket(piece.text, "inbound");
+        call.animatedInboundPieces += 1;
+      }
+    } else if (call.animatedInboundPieces === 0) {
+      call.animatedInboundPieces = 1;
+      await animateWirePacket(event.text, "inbound");
+    }
     call.tokens.push(event.text);
     state.streamingText += event.text;
     renderTranscript();
@@ -1166,7 +1502,7 @@ async function applyStreamEvent(call, event) {
 }
 
 async function runOpenRouter(call) {
-  await animateWirePacket(call.snapshot, "outbound");
+  await animateWirePacket(call.snapshot, "outbound", call.number === 1);
 
   const response = await fetch("./api/chat", {
     method: "POST",
@@ -1269,6 +1605,7 @@ newChatEl.addEventListener("click", () => {
   state.messages = [];
   state.calls = [];
   state.streamingText = "";
+  state.roomOneSummaryDismissed = false;
   draftEl.value = "";
   requestErrorEl.hidden = true;
   requestErrorEl.textContent = "";
@@ -1304,8 +1641,15 @@ comparisonFormEl.addEventListener("submit", async (event) => {
   if (failures.length) {
     comparisonErrorEl.textContent = `${failures.length} of 3 model calls failed.`;
     comparisonErrorEl.hidden = false;
+  } else {
+    comparisonSummaryEl.hidden = false;
+    comparisonSummaryEl.scrollIntoView({ behavior: "smooth", block: "center" });
   }
   setComparisonBusy(false);
+});
+
+comparisonNextEl.addEventListener("click", () => {
+  tabs.find((tab) => tab.dataset.view === "tokens")?.click();
 });
 
 for (const preset of thinkingPresetEls) {
@@ -1339,6 +1683,7 @@ thinkingFormEl.addEventListener("submit", async (event) => {
     thinkingErrorEl.hidden = false;
   }
   setThinkingBusy(false);
+  if (results.some((result) => result.status === "fulfilled")) showRoomFiveSummary();
 });
 
 function addToolEvent(event) {
@@ -1430,7 +1775,20 @@ toolWireDialogEl.addEventListener("click", (event) => {
 
 for (const tab of tabs) {
   tab.addEventListener("click", () => {
-    state.view = tab.dataset.view;
+    if (state.awaitingModelStart) return;
+    const nextView = tab.dataset.view;
+    if (nextView === "system" && state.view !== "system") {
+      state.messages = [];
+      state.calls = [];
+      state.streamingText = "";
+      state.systemPrompt = "";
+      state.roomTwoSelections = { language: "", personality: "", response: "" };
+      draftEl.value = "";
+      requestErrorEl.hidden = true;
+      requestErrorEl.textContent = "";
+      renderTranscript();
+    }
+    state.view = nextView;
     workspaceEl.dataset.view = state.view;
     const comparing = state.view === "compare";
     const thinking = state.view === "thinking";
@@ -1440,7 +1798,7 @@ for (const tab of tabs) {
     comparisonWorkspaceEl.hidden = !comparing;
     thinkingWorkspaceEl.hidden = !thinking;
     toolsWorkspaceEl.hidden = !tools;
-    newChatEl.textContent = standalone ? "Clear results" : "New chat";
+    newChatEl.textContent = "Reset room";
     for (const candidate of tabs) {
       const active = candidate === tab;
       candidate.classList.toggle("active", active);
@@ -1449,8 +1807,10 @@ for (const tab of tabs) {
     if (!standalone) {
       renderDetailHeading();
       renderStage();
+      if (state.view === "system") showRoomTwoIntro();
     }
     if (tools) renderToolDemo();
+    if (state.view === "thinking") showRoomFiveIntro();
   });
 }
 

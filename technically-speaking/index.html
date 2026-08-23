@@ -7,46 +7,46 @@
       name="description"
       content="Interactive views of how an agent, transcript, and language models work together."
     />
-    <title>Agent transcript prototypes</title>
+    <title>The Agent Escape Room</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
-        <div>
-          <p class="eyebrow">Prototype</p>
-          <h1>How a chat agent works</h1>
+        <div class="topbar-copy">
+          <p class="eyebrow">An interactive course for curious humans</p>
+          <h1>The Agent Escape Room</h1>
+          <p class="topbar-intro">
+            Explore one room at a time. Each room reveals a clue about what happens
+            after you press Send—no technical background required.
+          </p>
         </div>
-        <button id="new-chat" class="button secondary" type="button">New chat</button>
+        <div class="mission-stamp" aria-hidden="true"><span>6 rooms</span><b>Start here</b></div>
+        <button id="new-chat" class="button secondary" type="button">Reset room</button>
       </header>
 
-      <nav class="prototype-picker" aria-label="Choose a prototype">
+      <div class="room-map-heading">
+        <div><span>ESCAPE MAP</span><h2>Choose a room to investigate</h2></div>
+        <p>There is no wrong order. Start with Room 1 for the full story.</p>
+      </div>
+      <nav class="prototype-picker" aria-label="Choose an escape room">
         <button class="prototype-tab active" data-view="wire" type="button">
-          1. Live wire
-        </button>
-        <button class="prototype-tab" data-view="traffic" type="button">
-          2. Traffic log
-        </button>
-        <button class="prototype-tab" data-view="calls" type="button">
-          3. Call cards
-        </button>
-        <button class="prototype-tab" data-view="json" type="button">
-          4. JSON transcript
+          <small>Room 01</small><span>The Message Journey</span>
         </button>
         <button class="prototype-tab" data-view="system" type="button">
-          5. System prompt
+          <small>Room 02</small><span>Hidden Instructions</span>
         </button>
         <button class="prototype-tab" data-view="compare" type="button">
-          6. Compare models
+          <small>Room 03</small><span>Model Showdown</span>
         </button>
         <button class="prototype-tab" data-view="tokens" type="button">
-          7. Tokens &amp; cost
+          <small>Room 04</small><span>Tokens &amp; Cost</span>
         </button>
         <button class="prototype-tab" data-view="thinking" type="button">
-          8. Thinking
+          <small>Room 05</small><span>Thinking Levels</span>
         </button>
         <button class="prototype-tab" data-view="tools" type="button">
-          9. Tool calls
+          <small>Room 06</small><span>Web Search</span>
         </button>
       </nav>
 
@@ -54,8 +54,8 @@
         <section class="agent-area" aria-labelledby="agent-title">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">Agent</p>
-              <h2 id="agent-title">Transcript</h2>
+              <p class="eyebrow">Clue station · Agent</p>
+              <h2 id="agent-title">The conversation so far</h2>
             </div>
             <span id="message-count" class="count">0 messages</span>
           </div>
@@ -69,7 +69,7 @@
               <textarea
                 id="draft"
                 rows="2"
-                placeholder="Try “My name is Sam.”"
+                placeholder="Type “Tell me a joke”"
                 autocomplete="off"
               ></textarea>
               <span class="draft-label">draft · not sent</span>
@@ -81,7 +81,7 @@
         <section class="model-area" aria-labelledby="model-title">
           <div class="section-heading model-heading">
             <div>
-              <p id="detail-kicker" class="eyebrow">Model</p>
+              <p id="detail-kicker" class="eyebrow">Discovery station · Model</p>
               <h2 id="model-title">No transcript stored</h2>
             </div>
             <span id="model-status" class="status idle">Idle</span>
@@ -103,7 +103,7 @@
 
         <form id="comparison-form" class="comparison-form">
           <div class="preset-row" aria-label="Example questions">
-            <button class="preset active" type="button" data-preset="nyc">NYC knowledge</button>
+            <button class="preset active" type="button" data-preset="nyc">Obscure NYC landmark</button>
             <button class="preset" type="button" data-preset="tiananmen">Tiananmen Square</button>
             <button class="preset" type="button" data-preset="taiwan">Taiwan</button>
           </div>
@@ -126,7 +126,10 @@
                 <p class="eyebrow">Small · open weights</p>
                 <h3>Llama 3.2 1B</h3>
               </div>
-              <span class="model-run-status">Not asked</span>
+              <div class="model-card-badges">
+                <span class="model-country" title="Created in the United States" aria-label="United States">🇺🇸</span>
+                <span class="model-run-status">Not asked</span>
+              </div>
             </header>
             <p class="model-facts">Meta · United States · 1B parameters</p>
             <p class="model-pricing">Price · input $0.027 / 1M tokens · output $0.201 / 1M tokens</p>
@@ -146,7 +149,10 @@
                 <p class="eyebrow">Large · open weights</p>
                 <h3>DeepSeek V3.2</h3>
               </div>
-              <span class="model-run-status">Not asked</span>
+              <div class="model-card-badges">
+                <span class="model-country" title="Created in China" aria-label="China">🇨🇳</span>
+                <span class="model-run-status">Not asked</span>
+              </div>
             </header>
             <p class="model-facts">DeepSeek · China</p>
             <p class="model-pricing">Price · input $0.26 / 1M tokens · output $0.38 / 1M tokens</p>
@@ -166,7 +172,10 @@
                 <p class="eyebrow">Large · closed weights</p>
                 <h3>GPT-5.6 Luna</h3>
               </div>
-              <span class="model-run-status">Not asked</span>
+              <div class="model-card-badges">
+                <span class="model-country" title="Created in the United States" aria-label="United States">🇺🇸</span>
+                <span class="model-run-status">Not asked</span>
+              </div>
             </header>
             <p class="model-facts">OpenAI · United States</p>
             <p class="model-pricing">Price · input $0.20 / 1M tokens · output $1.20 / 1M tokens</p>
@@ -176,6 +185,16 @@
           </article>
         </div>
         <p id="comparison-error" class="request-error" role="alert" hidden></p>
+        <section id="comparison-summary" class="lesson-summary" aria-labelledby="comparison-summary-title" hidden>
+          <span class="lesson-summary-kicker">Room 03 complete</span>
+          <h3 id="comparison-summary-title">What did we learn?</h3>
+          <p>
+            One prompt can produce different answers because models are built, trained, and guided differently.
+            This matters because the model you choose affects what it knows, what it refuses, what it costs,
+            and how reliable its answer may be.
+          </p>
+          <button id="comparison-next" class="lesson-summary-next" type="button">Enter Room 04 →</button>
+        </section>
       </section>
 
       <section id="thinking-workspace" class="comparison-workspace thinking-workspace" hidden>
@@ -189,9 +208,6 @@
 
         <form id="thinking-form" class="comparison-form">
           <div class="preset-row" aria-label="Example questions">
-            <button class="thinking-preset" type="button" data-thinking-preset="schedule">
-              Meetup schedule
-            </button>
             <button class="thinking-preset active" type="button" data-thinking-preset="numbers">
               Number puzzle
             </button>
@@ -389,6 +405,15 @@
           <div id="moving-packet" class="moving-packet" hidden></div>
         </div>
         <p id="wire-caption" class="stage-caption">Nothing is crossing the wire.</p>
+        <aside id="wire-explanation" class="wire-explanation" role="status" aria-live="polite" hidden>
+          <div class="wire-explanation-text">
+            <strong id="wire-explanation-title"></strong>
+            <p id="wire-explanation-copy"></p>
+          </div>
+          <button id="wire-continue" class="wire-continue" type="button" hidden>
+            Start model response →
+          </button>
+        </aside>
       </div>
     </template>
 
@@ -422,9 +447,39 @@
 
     <template id="system-template">
       <div class="system-view">
-        <label class="system-label" for="system-prompt">System prompt</label>
-        <textarea id="system-prompt" rows="12" spellcheck="true"></textarea>
-        <p class="system-note">Sent with every model call. Changes affect the next call.</p>
+        <span class="snapshot-label">Build a system prompt</span>
+        <h3>Customize the assistant</h3>
+        <p class="system-note">Choose one option from each group.</p>
+
+        <fieldset class="prompt-choice-group">
+          <legend>What language should it use?</legend>
+          <div class="personality-options">
+            <button type="button" data-system-category="language" data-system-value="Respond only in English. Every word of the answer must be in English.">English</button>
+            <button type="button" data-system-category="language" data-system-value="Respond only in Spanish. Every word of the answer must be in Spanish, even if the user writes in another language.">Spanish</button>
+            <button type="button" data-system-category="language" data-system-value="Respond only in French. Every word of the answer must be in French, even if the user writes in another language.">French</button>
+          </div>
+        </fieldset>
+
+        <fieldset class="prompt-choice-group">
+          <legend>How should it talk?</legend>
+          <div class="personality-options">
+            <button type="button" data-system-category="personality" data-system-value="Talk like an extremely rude, impatient New York City taxi driver with a huge attitude. Be loud, blunt, sarcastic, and abrasive, using unmistakable New York slang and expressions throughout—like fuhgeddaboudit, c'mon, you kiddin' me, whaddaya want, lemme tell ya, pal, and buddy. Sound like a real pissed-off New Yorker in every sentence, but do not use slurs or hateful language.">Rude NYC cabbie</button>
+            <button type="button" data-system-category="personality" data-system-value="Speak entirely like an exaggerated person from medieval times. Use theatrical old-fashioned words such as thee, thou, thy, verily, and prithee throughout every response.">Medieval times</button>
+            <button type="button" data-system-category="personality" data-system-value="Use an unmistakable Yoda-like speaking pattern in every sentence: strongly inverted word order, short declarations, unusual syntax, and the cadence of a mysterious ancient space sage.">Yoda</button>
+          </div>
+        </fieldset>
+
+        <fieldset class="prompt-choice-group">
+          <legend>How should it respond?</legend>
+          <div class="personality-options">
+            <button type="button" data-system-category="response" data-system-value="Turn every response into an extremely philosophical reflection. Even the simplest question must become a dramatic meditation on meaning, truth, knowledge, free will, or existence.">Extremely philosophical</button>
+            <button type="button" data-system-category="response" data-system-value="For harmless casual questions, agree with the user immediately, completely, and enthusiastically. Strongly validate their idea and offer no doubt, criticism, or alternative viewpoint.">Always agree</button>
+            <button type="button" data-system-category="response" data-system-value="Be intensely skeptical of every claim or suggestion. Question assumptions, demand evidence, point out possible flaws, and never accept the user's premise at face value.">Always be skeptical</button>
+          </div>
+        </fieldset>
+        <label class="system-label" for="system-prompt">Your system prompt</label>
+        <textarea id="system-prompt" rows="5" spellcheck="true" placeholder="Choose a personality above"></textarea>
+        <p class="system-note">This instruction will be sent with your next message.</p>
       </div>
     </template>
 
@@ -432,10 +487,36 @@
       <div class="token-cost-view">
         <div class="token-view-heading">
           <div>
-            <span class="snapshot-label">Current model input</span>
+            <span class="snapshot-label">Current conversation size</span>
             <strong id="visible-token-count">0 estimated tokens</strong>
           </div>
           <span class="tokenizer-label">js-tiktoken · o200k_base estimate</span>
+        </div>
+
+        <section class="token-flow-summary" aria-label="Token totals">
+          <article class="token-total-card input">
+            <span class="token-direction">Agent → Model</span>
+            <strong id="session-input-tokens">0</strong>
+            <h3>Input tokens sent</h3>
+            <p>The system prompt and conversation history sent with each call.</p>
+          </article>
+          <article class="token-total-card output">
+            <span class="token-direction">Model → Agent</span>
+            <strong id="session-output-tokens">0</strong>
+            <h3>Output tokens returned</h3>
+            <p>The new answer streamed back from the model.</p>
+          </article>
+          <article class="token-total-card total">
+            <span class="token-direction">Input + Output</span>
+            <strong id="session-total-tokens">0</strong>
+            <h3>Total tokens processed</h3>
+            <p>Everything sent and received across the conversation so far.</p>
+          </article>
+        </section>
+
+        <div class="token-transcript-heading">
+          <span>Current conversation split into tokens</span>
+          <span><i class="token-key user"></i> User input <i class="token-key assistant"></i> Model output</span>
         </div>
 
         <div

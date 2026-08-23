@@ -185,12 +185,27 @@ try {
   const page = await fetch(`${baseUrl}/technically-speaking/`, { headers });
   assert.equal(page.status, 200);
   const pageHtml = await page.text();
-  assert.match(pageHtml, /How a chat agent works/);
-  assert.match(pageHtml, /9\. Tool calls/);
+  assert.match(pageHtml, /The Agent Escape Room/);
+  assert.match(pageHtml, /<span>6 rooms<\/span>/);
+  assert.match(pageHtml, /Room 06/);
+  assert.match(pageHtml, /Web Search/);
   assert.match(pageHtml, /Who actually searches the web/);
   assert.match(pageHtml, /tool-results-dialog/);
   assert.match(pageHtml, /tool-wire-dialog/);
   assert.doesNotMatch(pageHtml, /One more tool makes this coding/);
+  const roomViews = [...pageHtml.matchAll(/class="prototype-tab(?: active)?" data-view="([^"]+)"/g)]
+    .map((match) => match[1]);
+  assert.deepEqual(roomViews, ["wire", "system", "compare", "tokens", "thinking", "tools"]);
+  const ids = [...pageHtml.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
+  assert.equal(new Set(ids).size, ids.length, "tutorial HTML contains duplicate IDs");
+
+  const appSourceResponse = await fetch(`${baseUrl}/technically-speaking/app.js`, { headers });
+  assert.equal(appSourceResponse.status, 200);
+  const appSource = await appSourceResponse.text();
+  assert.match(appSource, /toolsWorkspaceEl\.hidden = !tools/);
+  assert.match(appSource, /if \(tools\) renderToolDemo\(\)/);
+  assert.match(appSource, /showRoomFiveIntro\(\)/);
+  assert.match(appSource, /MAX_ANIMATED_INBOUND_TOKENS = 12/);
 
   const config = await fetch(`${baseUrl}/technically-speaking/api/config`, { headers });
   assert.equal(config.status, 200);
