@@ -14,7 +14,6 @@
     "smoke:session-switch": "tsx scripts/smoke-session-switch.ts",
     "smoke:skills": "AGENTMOM_EXECUTOR=local tsx scripts/smoke-skills.ts",
     "smoke:technically-speaking": "node technically-speaking/tokenizer-smoke.mjs && tsx scripts/smoke-technically-speaking.ts",
-    "smoke:tutorial-sandbox": "tsx scripts/smoke-tutorial-sandbox.ts",
     "smoke:fly": "tsx scripts/smoke-fly.ts",
     "smoke:local": "AGENTMOM_EXECUTOR=local tsx scripts/smoke-local.ts",
     "smoke:deploy": "AGENTMOM_EXECUTOR=local tsx scripts/smoke-deploy.ts"

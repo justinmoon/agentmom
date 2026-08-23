@@ -19,10 +19,6 @@ let bridge: PiBridge | undefined;
 try {
   bridge = new PiBridge(config, new PreviewManager(config));
   await bridge.init();
-  const initial = await bridge.snapshot();
-  assert.deepEqual(initial.tools, ["read", "bash", "edit", "write", "web_search"]);
-  assert.deepEqual(initial.toolDefinitions.map((tool) => tool.name), initial.tools);
-  assert.equal(initial.toolDefinitions.every((tool) => Boolean(tool.description) && Boolean(tool.parameters)), true);
 
   const withOldEvent = bridge.registerPreview(12345, "Old preview");
   assert.equal(

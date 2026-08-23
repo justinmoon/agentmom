@@ -33,9 +33,6 @@ smoke-skills:
 smoke-technically-speaking:
     nix develop -c npm run smoke:technically-speaking
 
-smoke-tutorial-sandbox:
-    nix develop -c npm run smoke:tutorial-sandbox
-
 smoke-local:
     nix develop -c npm run smoke:local
 
@@ -63,8 +60,6 @@ check-prod:
     [[ "$tutorial_api_status" == "401" ]]
     tutorial_tool_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST https://agentmom.xyz/technically-speaking/api/tool-demo)"
     [[ "$tutorial_tool_status" == "401" ]]
-    tutorial_vibe_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST https://agentmom.xyz/technically-speaking/api/vibe-demo)"
-    [[ "$tutorial_vibe_status" == "401" ]]
     echo "prod check ok"
 
 logs-prod:

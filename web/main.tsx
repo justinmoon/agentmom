@@ -60,7 +60,6 @@ const emptyState: AppState = {
   isRunning: false,
   model: "",
   tools: [],
-  toolDefinitions: [],
   runtime: {
     executor: "local"
   }
@@ -73,8 +72,7 @@ function App() {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | undefined>();
   const [state, setState] = useState<AppState>(emptyState);
   const [error, setError] = useState<string | undefined>();
-  const focusTools = new URLSearchParams(window.location.search).get("panel") === "tools";
-  const [rightPanelOpen, setRightPanelOpen] = useState(focusTools);
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [focusSkill, setFocusSkill] = useState<{ name: string; nonce: number } | undefined>();
   const isAdminPage = window.location.pathname === "/admin";
   const isTelegramSettingsPage = window.location.pathname === "/settings/telegram";
@@ -391,10 +389,8 @@ function App() {
               <RightPanel
                 previews={state.previews}
                 skills={state.skills}
-                tools={state.toolDefinitions}
                 workspaceUrl={workspaceUrl}
                 focusSkill={focusSkill}
-                focusTools={focusTools}
                 onCollapse={() => setRightPanelOpen(false)}
                 onRemovePreview={removePreview}
               />

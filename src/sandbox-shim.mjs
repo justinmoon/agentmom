@@ -8,22 +8,14 @@
 
 import { spawn } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { createWriteStream, lstatSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { access, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { createWriteStream, mkdirSync, statSync } from "node:fs";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { dirname, resolve } from "node:path";
 
 const PORT = 8080;
 const TOKEN = process.env.AGENTMOM_SHIM_TOKEN ?? "";
 const ROOT = process.env.AGENTMOM_WORKSPACE ?? "/workspace";
-const IDLE_MS = Number(process.env.AGENTMOM_IDLE_MS ?? 0);
-const MAX_LIFETIME_MS = Number(process.env.AGENTMOM_MAX_LIFETIME_MS ?? 0);
-const MAX_EXEC_OUTPUT = Number(process.env.AGENTMOM_EXEC_MAX_OUTPUT_BYTES ?? 0);
-const ALLOW_SPAWN = process.env.AGENTMOM_ALLOW_SPAWN !== "0";
-const STRICT_FILE_JAIL = process.env.AGENTMOM_STRICT_FILE_JAIL === "1";
-const KILL_PROCESS_GROUP = process.env.AGENTMOM_KILL_PROCESS_GROUP === "1";
-const STARTED_AT = Date.now();
-let lastActivity = STARTED_AT;
 
 if (!TOKEN) {
   console.error("AGENTMOM_SHIM_TOKEN is required");
@@ -44,36 +36,6 @@ function jailPath(rawPath) {
     throw Object.assign(new Error(`path outside ${ROOT}: ${path}`), { status: 400 });
   }
   return path;
-}
-
-async function jailExistingPath(rawPath) {
-  const path = jailPath(rawPath);
-  const actual = await realpath(path);
-  if (actual !== ROOT && !actual.startsWith(`${ROOT}/`) && !actual.startsWith("/tmp/")) {
-    throw Object.assign(new Error(`symlink outside ${ROOT}: ${path}`), { status: 400 });
-  }
-  return path;
-}
-
-function killExec(child) {
-  if (!child?.pid) return;
-  if (!KILL_PROCESS_GROUP) {
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // Process already exited.
-    }
-    return;
-  }
-  try {
-    process.kill(-child.pid, "SIGKILL");
-  } catch {
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // Process already exited.
-    }
-  }
 }
 
 function readBody(req, maxBytes = 512 * 1024 * 1024) {
@@ -110,42 +72,27 @@ async function handleExec(req, res) {
   const child = spawn("/bin/bash", ["-c", command], {
     cwd,
     env: { ...process.env, HOME: ROOT },
-    detached: KILL_PROCESS_GROUP
+    detached: false
   });
 
   const send = (record) => res.write(`${JSON.stringify(record)}\n`);
-  let outputBytes = 0;
-  let outputCapped = false;
-  const sendOutput = (key, data) => {
-    if (!MAX_EXEC_OUTPUT) return send({ [key]: data.toString("base64") });
-    const remaining = MAX_EXEC_OUTPUT - outputBytes;
-    if (remaining <= 0) {
-      if (!outputCapped) send({ e: Buffer.from("\n[output capped]\n").toString("base64") });
-      outputCapped = true;
-      return;
-    }
-    const chunk = data.subarray(0, remaining);
-    outputBytes += chunk.length;
-    send({ [key]: chunk.toString("base64") });
-  };
-  child.stdout.on("data", (data) => sendOutput("o", data));
-  child.stderr.on("data", (data) => sendOutput("e", data));
+  child.stdout.on("data", (data) => send({ o: data.toString("base64") }));
+  child.stderr.on("data", (data) => send({ e: data.toString("base64") }));
 
   const timer = setTimeout(() => {
     send({ t: true });
-    killExec(child);
+    child.kill("SIGKILL");
   }, timeout);
   req.on("close", () => {
     // Server hung up (abort): kill the command.
     clearTimeout(timer);
-    if (child.exitCode === null) killExec(child);
+    if (child.exitCode === null) child.kill("SIGKILL");
   });
 
   child.on("close", (exitCode) => {
     clearTimeout(timer);
     send({ x: exitCode });
     res.end();
-    killExec(child);
   });
   child.on("error", (error) => {
     clearTimeout(timer);
@@ -155,7 +102,6 @@ async function handleExec(req, res) {
 }
 
 async function handleSpawn(req, res) {
-  if (!ALLOW_SPAWN) return sendJson(res, 403, { error: "detached commands are disabled" });
   const body = JSON.parse((await readBody(req)).toString("utf8"));
   const command = String(body.command ?? "");
   const cwd = jailPath(body.cwd ?? ROOT);
@@ -185,7 +131,6 @@ async function handleFile(req, res, url) {
       const stats = statSync(path);
       return sendJson(res, 200, { size: stats.size, mtimeMs: stats.mtimeMs, dir: stats.isDirectory() });
     }
-    if (STRICT_FILE_JAIL) await jailExistingPath(path);
     const data = await readFile(path);
     res.writeHead(200, { "content-type": "application/octet-stream" });
     return res.end(data);
@@ -201,27 +146,6 @@ async function handleFile(req, res, url) {
     return sendJson(res, 200, { ok: true });
   }
   return sendJson(res, 405, { error: "method not allowed" });
-}
-
-function handleFiles(_req, res, url) {
-  const root = jailPath(url.searchParams.get("root") ?? ROOT);
-  const actualRoot = realpathSync(root);
-  if (actualRoot !== ROOT && !actualRoot.startsWith(`${ROOT}/`)) {
-    throw Object.assign(new Error(`path outside ${ROOT}: ${root}`), { status: 400 });
-  }
-  const files = [];
-  const walk = (dir, prefix = "") => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (files.length >= 200 || entry.isSymbolicLink()) continue;
-      const absolute = resolve(dir, entry.name);
-      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-      const stats = lstatSync(absolute);
-      if (stats.isDirectory()) walk(absolute, path);
-      else if (stats.isFile()) files.push({ path, size: stats.size });
-    }
-  };
-  walk(actualRoot);
-  sendJson(res, 200, { files });
 }
 
 async function handleProxy(req, res) {
@@ -275,12 +199,10 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://shim");
     if (url.pathname === "/health") return sendJson(res, 200, { ok: true, root: ROOT });
     if (!authorized(req)) return sendJson(res, 401, { error: "unauthorized" });
-    lastActivity = Date.now();
 
     if (url.pathname === "/exec" && req.method === "POST") return await handleExec(req, res);
     if (url.pathname === "/spawn" && req.method === "POST") return await handleSpawn(req, res);
     if (url.pathname === "/file") return await handleFile(req, res, url);
-    if (url.pathname === "/files" && req.method === "GET") return handleFiles(req, res, url);
     if (url.pathname === "/proxy" && req.method === "POST") return await handleProxy(req, res);
     if (url.pathname === "/tar" && req.method === "GET") return handleTar(req, res, url);
     if (url.pathname === "/untar" && req.method === "POST") return await handleUntar(req, res, url);
@@ -298,13 +220,3 @@ mkdirSync(ROOT, { recursive: true });
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`agentmom shim on :${PORT}, root ${ROOT}`);
 });
-
-if (IDLE_MS > 0 || MAX_LIFETIME_MS > 0) {
-  setInterval(() => {
-    const now = Date.now();
-    if ((IDLE_MS > 0 && now - lastActivity >= IDLE_MS) || (MAX_LIFETIME_MS > 0 && now - STARTED_AT >= MAX_LIFETIME_MS)) {
-      server.close(() => process.exit(0));
-      setTimeout(() => process.exit(0), 1000).unref();
-    }
-  }, 15_000).unref();
-}

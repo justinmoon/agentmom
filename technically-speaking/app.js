@@ -50,19 +50,6 @@ const toolWireKickerEl = document.querySelector("#tool-wire-kicker");
 const toolWireTitleEl = document.querySelector("#tool-wire-title");
 const toolWireNoteEl = document.querySelector("#tool-wire-note");
 const toolWireJsonEl = document.querySelector("#tool-wire-json");
-const vibeFormEl = document.querySelector("#vibe-form");
-const vibePromptEl = document.querySelector("#vibe-prompt");
-const runVibeEl = document.querySelector("#run-vibe");
-const resetVibeEl = document.querySelector("#reset-vibe");
-const vibeStatusEl = document.querySelector("#vibe-status");
-const vibeEventsEl = document.querySelector("#vibe-events");
-const vibeFileListEl = document.querySelector("#vibe-file-list");
-const vibeFileCountEl = document.querySelector("#vibe-file-count");
-const vibeFileContentEl = document.querySelector("#vibe-file-content");
-const vibePreviewFrameEl = document.querySelector("#vibe-preview-frame");
-const vibePreviewEmptyEl = document.querySelector("#vibe-preview-empty");
-const refreshVibePreviewEl = document.querySelector("#refresh-vibe-preview");
-const vibeErrorEl = document.querySelector("#vibe-error");
 const tabs = [...document.querySelectorAll(".prototype-tab")];
 
 const comparisonPrompts = {
@@ -97,10 +84,6 @@ const state = {
   toolsBusy: false,
   toolEvents: [],
   toolReplayTimer: null,
-  vibeBusy: false,
-  vibeEvents: [],
-  vibeFiles: [],
-  vibeSelectedFile: null,
 };
 
 function textPart(text) {
@@ -271,28 +254,10 @@ function setToolsBusy(busy) {
   runToolsEl.disabled = busy;
   replayToolsEl.disabled = busy || state.toolEvents.length === 0;
   newChatEl.disabled = busy;
-  vibePromptEl.disabled = busy;
-  runVibeEl.disabled = busy;
-  resetVibeEl.disabled = busy;
   const failed = state.toolEvents.some((event) => event.type === "error");
   toolsStatusEl.textContent = busy ? "Running loop" : failed ? "Error" : state.toolEvents.length ? "Done" : "Ready";
   toolsStatusEl.classList.toggle("busy", busy);
   toolsStatusEl.classList.toggle("idle", !busy);
-}
-
-function setVibeBusy(busy) {
-  state.vibeBusy = busy;
-  vibePromptEl.disabled = busy;
-  runVibeEl.disabled = busy;
-  resetVibeEl.disabled = busy;
-  toolsQuestionEl.disabled = busy;
-  webSearchEnabledEl.disabled = busy;
-  runToolsEl.disabled = busy;
-  newChatEl.disabled = busy;
-  refreshVibePreviewEl.disabled = busy || !state.vibeFiles.some((file) => file.path === "index.html");
-  vibeStatusEl.textContent = busy ? "Building in Fly" : state.vibeEvents.length ? "Done" : "Ready";
-  vibeStatusEl.classList.toggle("busy", busy);
-  vibeStatusEl.classList.toggle("idle", !busy);
 }
 
 function clearToolReplay() {
@@ -580,181 +545,6 @@ function replayToolDemo() {
       replayToolsEl.disabled = false;
     }
   }, reducedMotion ? 20 : 650);
-}
-
-function vibePresentation(event) {
-  if (event.type === "user_message") {
-    return { actor: "user", title: "User asks the agent", detail: event.prompt };
-  }
-  if (event.type === "agent_model_request") {
-    const tools = Array.isArray(event.tools) && event.tools.length > 0;
-    return {
-      actor: "agent",
-      title: `Agent calls the model · turn ${event.turn}`,
-      detail: tools ? "Transcript plus the bash tool description" : "Transcript only; command limit reached",
-    };
-  }
-  if (event.type === "model_tool_call") {
-    return {
-      actor: "model",
-      title: "Model requests bash",
-      detail: event.arguments?.command || "No command",
-      code: true,
-    };
-  }
-  if (event.type === "agent_tool_start") {
-    return {
-      actor: "agent",
-      title: "Agent executes the request",
-      detail: "The command now runs inside the temporary Fly machine.",
-    };
-  }
-  if (event.type === "agent_tool_result") {
-    return {
-      actor: "sandbox",
-      title: `Bash exits ${event.exitCode ?? "?"}`,
-      detail: event.text || "(no output)",
-      code: true,
-    };
-  }
-  if (event.type === "model_response") {
-    return { actor: "model", title: "Model finishes", detail: event.text };
-  }
-  if (event.type === "agent_user_response") {
-    return { actor: "agent", title: "Agent reports back", detail: event.text };
-  }
-  if (event.type === "done") {
-    return {
-      actor: "agent",
-      title: "Loop stops",
-      detail: `${event.modelCalls} model calls · ${event.toolCalls} bash calls · sandbox expires in ${event.expiresInMinutes} minutes`,
-    };
-  }
-  return null;
-}
-
-function renderVibeEvents() {
-  vibeEventsEl.replaceChildren();
-  const visible = state.vibeEvents.filter((event) => vibePresentation(event));
-  if (!visible.length) {
-    const empty = document.createElement("li");
-    empty.className = "vibe-empty";
-    empty.textContent = "Run the demo to watch the model request Bash commands.";
-    vibeEventsEl.append(empty);
-    return;
-  }
-  for (const event of visible) {
-    const view = vibePresentation(event);
-    const item = document.createElement("li");
-    item.className = `vibe-event actor-${view.actor}`;
-    const wire = toolWireView(event);
-    const card = document.createElement(wire ? "button" : "div");
-    if (wire) card.type = "button";
-    card.className = "vibe-event-card";
-    if (wire) card.addEventListener("click", () => showToolWire(event));
-    const title = document.createElement("strong");
-    title.textContent = view.title;
-    const detail = document.createElement(view.code ? "code" : "small");
-    detail.textContent = view.detail || "";
-    card.append(title, detail);
-    if (wire) {
-      const action = document.createElement("span");
-      action.className = "tool-event-action";
-      action.textContent = wire.action;
-      card.append(action);
-    }
-    item.append(card);
-    vibeEventsEl.append(item);
-  }
-  vibeEventsEl.scrollTop = vibeEventsEl.scrollHeight;
-}
-
-async function selectVibeFile(path) {
-  state.vibeSelectedFile = path;
-  renderVibeFiles();
-  const response = await fetch(`./api/vibe-file?path=${encodeURIComponent(path)}`);
-  if (!response.ok) throw new Error(await responseError(response));
-  const contentType = response.headers.get("content-type") || "";
-  if (contentType.startsWith("image/")) {
-    vibeFileContentEl.textContent = `[binary image: ${path}]`;
-  } else {
-    vibeFileContentEl.textContent = await response.text();
-  }
-}
-
-function renderVibeFiles() {
-  vibeFileListEl.replaceChildren();
-  vibeFileCountEl.textContent = `${state.vibeFiles.length} file${state.vibeFiles.length === 1 ? "" : "s"}`;
-  if (!state.vibeFiles.length) {
-    const empty = document.createElement("span");
-    empty.className = "vibe-empty";
-    empty.textContent = "No files yet.";
-    vibeFileListEl.append(empty);
-  }
-  for (const file of state.vibeFiles) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.classList.toggle("active", file.path === state.vibeSelectedFile);
-    button.textContent = file.path;
-    button.title = `${file.path} · ${file.size} bytes`;
-    button.addEventListener("click", () => void selectVibeFile(file.path).catch(showVibeError));
-    vibeFileListEl.append(button);
-  }
-  const previewReady = state.vibeFiles.some((file) => file.path === "index.html");
-  refreshVibePreviewEl.disabled = state.vibeBusy || !previewReady;
-  if (!previewReady) {
-    vibePreviewFrameEl.hidden = true;
-    vibePreviewEmptyEl.hidden = false;
-  } else if (vibePreviewFrameEl.hidden) {
-    refreshVibePreview();
-  }
-}
-
-function refreshVibePreview() {
-  const ready = state.vibeFiles.some((file) => file.path === "index.html");
-  vibePreviewFrameEl.hidden = !ready;
-  vibePreviewEmptyEl.hidden = ready;
-  if (ready) vibePreviewFrameEl.src = `./api/vibe-preview/index.html?v=${Date.now()}`;
-}
-
-function showVibeError(error) {
-  const message = error instanceof Error ? error.message : String(error);
-  vibeErrorEl.textContent = message;
-  vibeErrorEl.hidden = false;
-  vibeStatusEl.textContent = "Error";
-}
-
-function clearVibeDemo() {
-  state.vibeEvents = [];
-  state.vibeFiles = [];
-  state.vibeSelectedFile = null;
-  vibeFileContentEl.textContent = "Select a file to read it.";
-  vibePreviewFrameEl.removeAttribute("src");
-  vibePreviewFrameEl.hidden = true;
-  vibePreviewEmptyEl.hidden = false;
-  vibeErrorEl.hidden = true;
-  vibeErrorEl.textContent = "";
-  renderVibeEvents();
-  renderVibeFiles();
-  setVibeBusy(false);
-}
-
-function addVibeEvent(event) {
-  state.vibeEvents.push(event);
-  if (Array.isArray(event.files)) {
-    state.vibeFiles = event.files;
-    if (!state.vibeSelectedFile || !state.vibeFiles.some((file) => file.path === state.vibeSelectedFile)) {
-      state.vibeSelectedFile = state.vibeFiles.find((file) => file.path === "index.html")?.path || state.vibeFiles[0]?.path || null;
-    }
-    renderVibeFiles();
-    refreshVibePreview();
-    if (state.vibeSelectedFile) void selectVibeFile(state.vibeSelectedFile).catch(showVibeError);
-  }
-  if (event.type === "agent_model_request") vibeStatusEl.textContent = `Calling model · turn ${event.turn}`;
-  if (event.type === "model_tool_call") vibeStatusEl.textContent = "Bash requested";
-  if (event.type === "agent_tool_start") vibeStatusEl.textContent = "Running in Fly";
-  if (event.type === "agent_tool_result") vibeStatusEl.textContent = "Result returned";
-  renderVibeEvents();
 }
 
 function renderDetailHeading() {
@@ -1472,7 +1262,6 @@ newChatEl.addEventListener("click", () => {
   }
   if (state.view === "tools") {
     clearToolDemo();
-    clearVibeDemo();
     toolsQuestionEl.focus();
     return;
   }
@@ -1625,70 +1414,6 @@ toolsFormEl.addEventListener("submit", async (event) => {
   }
 });
 
-vibeFormEl.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const prompt = vibePromptEl.value.trim();
-  if (!prompt || state.vibeBusy) return;
-  clearVibeDemo();
-  setVibeBusy(true);
-  try {
-    const response = await fetch("./api/vibe-demo", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
-    });
-    if (!response.ok) throw new Error(await responseError(response));
-    if (response.headers.get("X-Tutorial-Vibe-API-Version") !== "1") {
-      throw new Error("The page and website demo versions do not match. Refresh the page.");
-    }
-    if (!response.body) throw new Error("The server returned no website build trace.");
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const trace = JSON.parse(line);
-        addVibeEvent(trace);
-        if (trace.type === "error") throw new Error(trace.error || "The website build failed.");
-      }
-    }
-    if (buffer.trim()) {
-      const trace = JSON.parse(buffer);
-      addVibeEvent(trace);
-      if (trace.type === "error") throw new Error(trace.error || "The website build failed.");
-    }
-    if (!state.vibeEvents.some((trace) => trace.type === "done")) {
-      throw new Error("The website build ended before the agent loop finished.");
-    }
-  } catch (error) {
-    showVibeError(error);
-  } finally {
-    setVibeBusy(false);
-  }
-});
-
-resetVibeEl.addEventListener("click", async () => {
-  if (state.vibeBusy) return;
-  resetVibeEl.disabled = true;
-  try {
-    const response = await fetch("./api/vibe-demo", { method: "DELETE" });
-    if (!response.ok) throw new Error(await responseError(response));
-    clearVibeDemo();
-  } catch (error) {
-    showVibeError(error);
-  } finally {
-    resetVibeEl.disabled = false;
-  }
-});
-
-refreshVibePreviewEl.addEventListener("click", refreshVibePreview);
-
 webSearchEnabledEl.addEventListener("change", () => {
   runToolsEl.textContent = webSearchEnabledEl.checked ? "Ask with web search" : "Ask without web search";
 });
@@ -1753,7 +1478,5 @@ thinkingPromptEl.value = thinkingPrompts.numbers;
 renderTranscript();
 renderStage();
 renderToolDemo();
-renderVibeEvents();
-renderVibeFiles();
 tabs[0].setAttribute("aria-pressed", "true");
 loadConfig();

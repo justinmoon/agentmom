@@ -38,7 +38,7 @@ import {
 import { ensureSkillRoots, skillRoots, toSkillSummary } from "./skills.js";
 import { FlySandbox } from "./fly-machines.js";
 import { allocatePort } from "./process-utils.js";
-import type { AppState, ChatMessage, MessageAttachment, SessionSummary, SkillSummary, ToolSummary, UiEvent } from "./types.js";
+import type { AppState, ChatMessage, MessageAttachment, SessionSummary, SkillSummary, UiEvent } from "./types.js";
 import { createWebSearchTool } from "./web-search.js";
 
 type PiMessage = UserMessage | AssistantMessage;
@@ -68,7 +68,6 @@ export class PiBridge {
   private resourceLoader?: DefaultResourceLoader;
   private skillWatchers: FSWatcher[] = [];
   private skillReloadTimer?: NodeJS.Timeout;
-  private toolSummaries: ToolSummary[] = [];
 
   constructor(
     private readonly config: AppConfig,
@@ -195,7 +194,6 @@ export class PiBridge {
     this.watchSkillDirs();
 
     const customTools = await this.prepareCustomTools(previewCli.guestBinDir);
-    this.toolSummaries = summarizeTools(this.config, customTools);
 
     const { session, modelFallbackMessage } = await createAgentSession({
       cwd: this.config.agentCwd,
@@ -424,7 +422,6 @@ export class PiBridge {
       isRunning: this.isRunning,
       model: `openrouter/${this.config.openRouterModel}`,
       tools: ACTIVE_TOOLS,
-      toolDefinitions: this.toolSummaries,
       error: this.lastError,
       runtime: {
         executor: this.config.executor,
@@ -836,27 +833,6 @@ export class PiBridge {
       ...this.events
     ].slice(0, 100);
   }
-}
-
-function summarizeTools(config: AppConfig, customTools: ToolDefinition[]): ToolSummary[] {
-  const definitions = new Map(customTools.map((tool) => [tool.name, tool]));
-  for (const fallback of [
-    createReadToolDefinition(config.agentCwd),
-    createBashToolDefinition(config.agentCwd),
-    createEditToolDefinition(config.agentCwd),
-    createWriteToolDefinition(config.agentCwd)
-  ]) {
-    if (!definitions.has(fallback.name)) definitions.set(fallback.name, fallback as unknown as ToolDefinition);
-  }
-  return ACTIVE_TOOLS.map((name) => definitions.get(name))
-    .filter((tool): tool is ToolDefinition => Boolean(tool))
-    .map((tool) => ({
-      name: tool.name,
-      label: tool.label,
-      description: tool.description,
-      parameters: structuredClone(tool.parameters),
-      executor: tool.name === "web_search" ? "external" : config.executor === "fly" ? "fly" : "host"
-    }));
 }
 
 function sessionMessages(sessionManager: SessionManager): ChatMessage[] {

@@ -43,10 +43,6 @@ export type AppConfig = {
     volumeGb: number;
     idleMinutes: number;
     appPrefix: string;
-    demoAppPrefix: string;
-    demoIdleMinutes: number;
-    demoMaxMinutes: number;
-    demoMemoryMb: number;
     deployAppPrefix: string;
     serverApp?: string;
     flyctl: string;
@@ -253,10 +249,6 @@ export function loadConfig(options: LoadConfigOptions = {}): AppConfig {
       volumeGb: numberFromEnv("AGENTMOM_FLY_VOLUME_GB", 10),
       idleMinutes: numberFromEnv("AGENTMOM_FLY_IDLE_MINUTES", 10),
       appPrefix: process.env.AGENTMOM_FLY_APP_PREFIX ?? "am-ws-",
-      demoAppPrefix: process.env.AGENTMOM_FLY_DEMO_APP_PREFIX ?? "am-demo-",
-      demoIdleMinutes: numberFromEnv("AGENTMOM_FLY_DEMO_IDLE_MINUTES", 10),
-      demoMaxMinutes: numberFromEnv("AGENTMOM_FLY_DEMO_MAX_MINUTES", 20),
-      demoMemoryMb: numberFromEnv("AGENTMOM_FLY_DEMO_MEMORY_MB", 512),
       deployAppPrefix: process.env.AGENTMOM_FLY_DEPLOY_APP_PREFIX ?? "am-dep-",
       serverApp: process.env.AGENTMOM_FLY_SERVER_APP,
       flyctl: process.env.AGENTMOM_FLYCTL_COMMAND ?? "flyctl",
