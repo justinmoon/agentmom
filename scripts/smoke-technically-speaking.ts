@@ -7,12 +7,77 @@ import { join } from "node:path";
 
 const root = mkdtempSync(join(tmpdir(), "agentmom-technically-speaking-"));
 const receivedRequests: Array<Record<string, any>> = [];
+const searchRequests: string[] = [];
 
 const upstream = createServer(async (req, res) => {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  if (url.pathname === "/search") {
+    searchRequests.push(url.searchParams.get("q") ?? "");
+    const sourceUrl = "https://example.com/congestion-pricing";
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        grounding: {
+          generic: [
+            {
+              url: sourceUrl,
+              title: "Congestion pricing began January 5, 2025",
+              snippets: ["The program began January 5, 2025 with a $9 daytime toll for most passenger cars."]
+            }
+          ]
+        },
+        sources: {
+          [sourceUrl]: {
+            title: "Congestion pricing began January 5, 2025",
+            hostname: "example.com"
+          }
+        }
+      })
+    );
+    return;
+  }
+
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   const request = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   receivedRequests.push(request);
+
+  if (request.stream === false) {
+    const toolMessage = request.messages.find((message: Record<string, unknown>) => message.role === "tool");
+    const message = request.tools
+      ? {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "search-1",
+              type: "function",
+              function: {
+                name: "web_search",
+                arguments: JSON.stringify({ query: "Manhattan congestion pricing start initial daytime toll" })
+              }
+            }
+          ]
+        }
+      : toolMessage
+        ? {
+            role: "assistant",
+            content: "Congestion pricing began January 5, 2025, with a $9 daytime toll for most passenger cars. Source: https://example.com/congestion-pricing"
+          }
+        : {
+            role: "assistant",
+            content: "I cannot verify this post-cutoff fact without current information."
+          };
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        model: request.model,
+        choices: [{ message }],
+        usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 }
+      })
+    );
+    return;
+  }
 
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   if (request.reasoning?.exclude === false) {
@@ -53,6 +118,7 @@ const server = spawn(process.execPath, ["node_modules/tsx/dist/cli.mjs", "src/se
     AGENTMOM_TELEGRAM_BOT_TOKEN: "smoke-telegram-token",
     AGENTMOM_TELEGRAM_DISABLED: "1",
     BRAVE_API_KEY: "smoke-brave-key",
+    BRAVE_LLM_CONTEXT_URL: `http://127.0.0.1:${upstreamAddress.port}/search`,
     OPENROUTER_API_KEY: "smoke-openrouter-key",
     OPENROUTER_CHAT_URL: `http://127.0.0.1:${upstreamAddress.port}`
   },
@@ -89,6 +155,15 @@ try {
   assert.equal(anonymousChat.status, 401);
   assert.equal(receivedRequests.length, 0, "anonymous request reached OpenRouter");
 
+  const anonymousToolDemo = await fetch(`${baseUrl}/technically-speaking/api/tool-demo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question: "What changed?", searchEnabled: true })
+  });
+  assert.equal(anonymousToolDemo.status, 401);
+  assert.equal(receivedRequests.length, 0, "anonymous tool demo reached OpenRouter");
+  assert.equal(searchRequests.length, 0, "anonymous tool demo reached Brave");
+
   const login = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -105,7 +180,10 @@ try {
 
   const page = await fetch(`${baseUrl}/technically-speaking/`, { headers });
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /How a chat agent works/);
+  const pageHtml = await page.text();
+  assert.match(pageHtml, /How a chat agent works/);
+  assert.match(pageHtml, /9\. Tool calls/);
+  assert.match(pageHtml, /Who actually searches the web/);
 
   const config = await fetch(`${baseUrl}/technically-speaking/api/config`, { headers });
   assert.equal(config.status, 200);
@@ -174,6 +252,68 @@ try {
     body: JSON.stringify({ model: "unapproved/model", systemPrompt: "", messages: [] })
   });
   assert.equal(rejected.status, 400);
+
+  const question =
+    "When did congestion pricing begin in Manhattan, and what was the initial daytime toll for most passenger cars?";
+  const withoutSearch = await fetch(`${baseUrl}/technically-speaking/api/tool-demo`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({ question, searchEnabled: false })
+  });
+  assert.equal(withoutSearch.status, 200);
+  assert.equal(withoutSearch.headers.get("x-tutorial-tool-api-version"), "1");
+  const withoutSearchEvents = (await withoutSearch.text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(
+    withoutSearchEvents.map((event) => event.type),
+    ["user_message", "agent_model_request", "model_response", "agent_user_response", "done"]
+  );
+  assert.equal(receivedRequests[3].model, "openai/gpt-oss-20b");
+  assert.equal(receivedRequests[3].tools, undefined);
+  assert.deepEqual(receivedRequests[3].reasoning, { effort: "low", exclude: true });
+  assert.equal(searchRequests.length, 0);
+  assert.match(withoutSearchEvents.find((event) => event.type === "agent_user_response").text, /cannot verify/);
+
+  const withSearch = await fetch(`${baseUrl}/technically-speaking/api/tool-demo`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({ question, searchEnabled: true })
+  });
+  assert.equal(withSearch.status, 200);
+  const withSearchEvents = (await withSearch.text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(
+    withSearchEvents.map((event) => event.type),
+    [
+      "user_message",
+      "agent_model_request",
+      "model_tool_call",
+      "agent_tool_start",
+      "agent_tool_result",
+      "agent_model_request",
+      "model_response",
+      "agent_user_response",
+      "done"
+    ]
+  );
+  assert.equal(receivedRequests[4].tools[0].function.name, "web_search");
+  assert.equal(receivedRequests[4].parallel_tool_calls, false);
+  assert.equal(receivedRequests[5].tools, undefined);
+  assert.equal(receivedRequests[5].messages.some((message: Record<string, unknown>) => message.role === "tool"), true);
+  assert.equal(searchRequests.length, 1);
+  assert.match(searchRequests[0], /congestion pricing/);
+  assert.match(withSearchEvents.find((event) => event.type === "agent_user_response").text, /January 5, 2025/);
+  assert.deepEqual(withSearchEvents.at(-1), {
+    at: withSearchEvents.at(-1).at,
+    type: "done",
+    searchEnabled: true,
+    modelCalls: 2,
+    toolCalls: 1
+  });
 
   console.log("technically-speaking smoke ok");
 } finally {

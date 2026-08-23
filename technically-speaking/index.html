@@ -45,6 +45,9 @@
         <button class="prototype-tab" data-view="thinking" type="button">
           8. Thinking
         </button>
+        <button class="prototype-tab" data-view="tools" type="button">
+          9. Tool calls
+        </button>
       </nav>
 
       <section class="workspace" data-view="wire">
@@ -262,6 +265,78 @@
           </article>
         </div>
         <p id="thinking-error" class="request-error" role="alert" hidden></p>
+      </section>
+
+      <section id="tools-workspace" class="comparison-workspace tools-workspace" hidden>
+        <header class="comparison-heading">
+          <div>
+            <p class="eyebrow">One model · optional tool</p>
+            <h2>Who actually searches the web?</h2>
+          </div>
+          <span id="tools-status" class="status idle">Ready</span>
+        </header>
+
+        <div class="tools-intro">
+          <form id="tools-form" class="tools-form">
+            <div class="tool-model-note">
+              <span class="snapshot-label">Model</span>
+              <strong>GPT-OSS 20B</strong>
+              <small>Knowledge cutoff · June 2024</small>
+            </div>
+            <label for="tools-question">Question sent to the agent</label>
+            <textarea id="tools-question" rows="3" spellcheck="true">When did congestion pricing begin in Manhattan, and what was the initial daytime toll for most passenger cars?</textarea>
+
+            <label class="tool-toggle" for="web-search-enabled">
+              <input id="web-search-enabled" type="checkbox" />
+              <span>
+                <strong>Let the agent offer <code>web_search</code></strong>
+                <small>The model receives a tool description. The agent keeps the search key and runs the search.</small>
+              </span>
+            </label>
+
+            <button id="run-tools" class="button primary" type="submit">Ask model</button>
+          </form>
+
+          <article class="tool-outcome" aria-live="polite">
+            <div class="tool-outcome-head">
+              <div>
+                <span class="snapshot-label">Answer returned to user</span>
+                <h3 id="tool-outcome-title">No run yet</h3>
+              </div>
+              <span id="tool-call-count" class="count">0 tool calls</span>
+            </div>
+            <div id="tool-answer" class="tool-answer empty">
+              Run once without search, then tick the box and run again.
+            </div>
+            <ol id="tool-quick-trace" class="tool-quick-trace"></ol>
+          </article>
+        </div>
+
+        <section class="tool-loop" aria-labelledby="tool-loop-heading">
+          <div class="tool-loop-head">
+            <div>
+              <p class="eyebrow">The agent loop</p>
+              <h3 id="tool-loop-heading">Back and forth, step by step</h3>
+            </div>
+            <button id="replay-tools" class="button secondary" type="button" disabled>Replay</button>
+          </div>
+
+          <div class="tool-lanes" aria-hidden="true">
+            <span>User</span>
+            <span>Agent</span>
+            <span>Model</span>
+            <span>Web</span>
+          </div>
+          <ol id="tool-loop-events" class="tool-loop-events">
+            <li class="tool-loop-empty">Run the demo to record the loop.</li>
+          </ol>
+
+          <details class="tool-raw">
+            <summary>Raw events and transcript</summary>
+            <pre><code id="tool-raw-json">[]</code></pre>
+          </details>
+        </section>
+        <p id="tools-error" class="request-error" role="alert" hidden></p>
       </section>
     </main>
 

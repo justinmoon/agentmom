@@ -2,7 +2,7 @@ import type { AgentToolUpdateCallback, ToolDefinition } from "@earendil-works/pi
 import { Type } from "typebox";
 import type { AppConfig } from "./config.js";
 
-const BRAVE_LLM_CONTEXT_URL = "https://api.search.brave.com/res/v1/llm/context";
+const DEFAULT_BRAVE_LLM_CONTEXT_URL = "https://api.search.brave.com/res/v1/llm/context";
 const DEFAULT_MAX_URLS = 5;
 const DEFAULT_MAX_SNIPPETS = 20;
 const DEFAULT_MAX_TOKENS = 4096;
@@ -134,7 +134,7 @@ export async function executeBraveWebSearch(
   }
 
   const maxUrls = clampInteger(params.max_urls ?? DEFAULT_MAX_URLS, 1, 10);
-  const url = new URL(BRAVE_LLM_CONTEXT_URL);
+  const url = new URL(process.env.BRAVE_LLM_CONTEXT_URL?.trim() || DEFAULT_BRAVE_LLM_CONTEXT_URL);
   url.searchParams.set("q", query.slice(0, 400));
   url.searchParams.set("count", String(clampInteger(maxUrls * 4, 1, 50)));
   url.searchParams.set("maximum_number_of_urls", String(maxUrls));

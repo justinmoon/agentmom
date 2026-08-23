@@ -58,6 +58,8 @@ check-prod:
     [[ "$tutorial_status" == "302" ]]
     tutorial_api_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://agentmom.xyz/technically-speaking/api/config)"
     [[ "$tutorial_api_status" == "401" ]]
+    tutorial_tool_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST https://agentmom.xyz/technically-speaking/api/tool-demo)"
+    [[ "$tutorial_tool_status" == "401" ]]
     echo "prod check ok"
 
 logs-prod:

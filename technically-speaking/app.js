@@ -26,6 +26,20 @@ const runThinkingEl = document.querySelector("#run-thinking");
 const thinkingStatusEl = document.querySelector("#thinking-status");
 const thinkingErrorEl = document.querySelector("#thinking-error");
 const thinkingPresetEls = [...document.querySelectorAll(".thinking-preset")];
+const toolsWorkspaceEl = document.querySelector("#tools-workspace");
+const toolsFormEl = document.querySelector("#tools-form");
+const toolsQuestionEl = document.querySelector("#tools-question");
+const webSearchEnabledEl = document.querySelector("#web-search-enabled");
+const runToolsEl = document.querySelector("#run-tools");
+const toolsStatusEl = document.querySelector("#tools-status");
+const toolsErrorEl = document.querySelector("#tools-error");
+const toolOutcomeTitleEl = document.querySelector("#tool-outcome-title");
+const toolCallCountEl = document.querySelector("#tool-call-count");
+const toolAnswerEl = document.querySelector("#tool-answer");
+const toolQuickTraceEl = document.querySelector("#tool-quick-trace");
+const toolLoopEventsEl = document.querySelector("#tool-loop-events");
+const toolRawJsonEl = document.querySelector("#tool-raw-json");
+const replayToolsEl = document.querySelector("#replay-tools");
 const tabs = [...document.querySelectorAll(".prototype-tab")];
 
 const comparisonPrompts = {
@@ -57,6 +71,9 @@ const state = {
   },
   comparisonBusy: false,
   thinkingBusy: false,
+  toolsBusy: false,
+  toolEvents: [],
+  toolReplayTimer: null,
 };
 
 function textPart(text) {
@@ -218,6 +235,179 @@ function setThinkingBusy(busy) {
   thinkingStatusEl.textContent = busy ? "Running 3 calls" : "Ready";
   thinkingStatusEl.classList.toggle("busy", busy);
   thinkingStatusEl.classList.toggle("idle", !busy);
+}
+
+function setToolsBusy(busy) {
+  state.toolsBusy = busy;
+  toolsQuestionEl.disabled = busy;
+  webSearchEnabledEl.disabled = busy;
+  runToolsEl.disabled = busy;
+  replayToolsEl.disabled = busy || state.toolEvents.length === 0;
+  newChatEl.disabled = busy;
+  const failed = state.toolEvents.some((event) => event.type === "error");
+  toolsStatusEl.textContent = busy ? "Running loop" : failed ? "Error" : state.toolEvents.length ? "Done" : "Ready";
+  toolsStatusEl.classList.toggle("busy", busy);
+  toolsStatusEl.classList.toggle("idle", !busy);
+}
+
+function clearToolReplay() {
+  if (state.toolReplayTimer !== null) {
+    window.clearInterval(state.toolReplayTimer);
+    state.toolReplayTimer = null;
+  }
+}
+
+function toolEventPresentation(event) {
+  if (event.type === "user_message") {
+    return { actor: "user", title: "User asks the agent", detail: event.question };
+  }
+  if (event.type === "agent_model_request") {
+    const offered = Array.isArray(event.tools) && event.tools.length > 0;
+    return {
+      actor: "agent",
+      title: `Agent calls the model · turn ${event.turn}`,
+      detail:
+        event.turn === 2
+          ? "Original transcript plus the tool result"
+          : offered
+            ? "Prompt plus web_search description"
+            : "Prompt and transcript; no tools offered",
+    };
+  }
+  if (event.type === "model_tool_call") {
+    return {
+      actor: "model",
+      title: "Model requests web_search",
+      detail: `${event.arguments?.query || "No query"} · Nothing has searched the web yet.`,
+    };
+  }
+  if (event.type === "agent_tool_start") {
+    return {
+      actor: "agent",
+      title: "Agent runs web_search",
+      detail: "The agent validates the request and uses its Brave API key.",
+    };
+  }
+  if (event.type === "agent_tool_result") {
+    const count = Array.isArray(event.sources) ? event.sources.length : 0;
+    return {
+      actor: "web",
+      title: "Web returns source context",
+      detail: `${count} source${count === 1 ? "" : "s"} returned to the agent`,
+    };
+  }
+  if (event.type === "model_response") {
+    return { actor: "model", title: "Model answers the agent", detail: event.text };
+  }
+  if (event.type === "agent_user_response") {
+    return { actor: "agent", title: "Agent returns the answer", detail: event.text };
+  }
+  if (event.type === "done") {
+    return {
+      actor: "agent",
+      title: "Loop stops",
+      detail: `${event.modelCalls} model call${event.modelCalls === 1 ? "" : "s"} · ${event.toolCalls} tool call${event.toolCalls === 1 ? "" : "s"}`,
+    };
+  }
+  return { actor: "agent", title: "Error", detail: event.error || "The loop failed." };
+}
+
+function quickToolLabel(event) {
+  if (event.type === "agent_model_request") return `Model call ${event.turn}`;
+  if (event.type === "model_tool_call") return "Tool requested";
+  if (event.type === "agent_tool_start") return "Agent searches";
+  if (event.type === "agent_tool_result") return "Sources returned";
+  if (event.type === "model_response") return "Model answers";
+  if (event.type === "agent_user_response") return "User receives answer";
+  return null;
+}
+
+function renderToolLoop(limit = state.toolEvents.length) {
+  toolLoopEventsEl.replaceChildren();
+  const visible = state.toolEvents.slice(0, limit);
+  if (!visible.length) {
+    const empty = document.createElement("li");
+    empty.className = "tool-loop-empty";
+    empty.textContent = "Run the demo to record the loop.";
+    toolLoopEventsEl.append(empty);
+    return;
+  }
+
+  for (const event of visible) {
+    const view = toolEventPresentation(event);
+    const item = document.createElement("li");
+    item.className = `tool-loop-event actor-${view.actor}`;
+
+    const card = document.createElement("div");
+    card.className = "tool-event-card";
+    const title = document.createElement("strong");
+    title.textContent = view.title;
+    const detail = document.createElement("small");
+    detail.textContent = view.detail || "";
+    card.append(title, detail);
+    item.append(card);
+    toolLoopEventsEl.append(item);
+  }
+}
+
+function renderToolDemo() {
+  const calls = state.toolEvents.filter((event) => event.type === "model_tool_call").length;
+  const final = [...state.toolEvents].reverse().find((event) => event.type === "agent_user_response");
+  const failed = [...state.toolEvents].reverse().find((event) => event.type === "error");
+  const searchOffered = state.toolEvents.some(
+    (event) => event.type === "agent_model_request" && Array.isArray(event.tools) && event.tools.length > 0,
+  );
+
+  toolOutcomeTitleEl.textContent = state.toolEvents.length
+    ? searchOffered
+      ? "Agent offered web_search"
+      : "Agent offered no tools"
+    : "No run yet";
+  toolCallCountEl.textContent = `${calls} tool call${calls === 1 ? "" : "s"}`;
+  toolAnswerEl.textContent = final?.text || failed?.error || "Run once without search, then tick the box and run again.";
+  toolAnswerEl.classList.toggle("empty", !final);
+
+  toolQuickTraceEl.replaceChildren();
+  for (const event of state.toolEvents) {
+    const label = quickToolLabel(event);
+    if (!label) continue;
+    const item = document.createElement("li");
+    item.className = "done";
+    item.textContent = label;
+    toolQuickTraceEl.append(item);
+  }
+
+  toolRawJsonEl.textContent = JSON.stringify(state.toolEvents, null, 2);
+  renderToolLoop();
+  replayToolsEl.disabled = state.toolsBusy || state.toolEvents.length === 0;
+}
+
+function clearToolDemo() {
+  clearToolReplay();
+  state.toolEvents = [];
+  toolsErrorEl.hidden = true;
+  toolsErrorEl.textContent = "";
+  toolsStatusEl.textContent = "Ready";
+  toolsStatusEl.classList.remove("busy");
+  toolsStatusEl.classList.add("idle");
+  renderToolDemo();
+}
+
+function replayToolDemo() {
+  clearToolReplay();
+  if (!state.toolEvents.length) return;
+  let visible = 0;
+  replayToolsEl.disabled = true;
+  renderToolLoop(visible);
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  state.toolReplayTimer = window.setInterval(() => {
+    visible += 1;
+    renderToolLoop(visible);
+    if (visible >= state.toolEvents.length) {
+      clearToolReplay();
+      replayToolsEl.disabled = false;
+    }
+  }, reducedMotion ? 20 : 650);
 }
 
 function renderDetailHeading() {
@@ -933,6 +1123,11 @@ newChatEl.addEventListener("click", () => {
     thinkingPromptEl.focus();
     return;
   }
+  if (state.view === "tools") {
+    clearToolDemo();
+    toolsQuestionEl.focus();
+    return;
+  }
 
   state.messages = [];
   state.calls = [];
@@ -1009,16 +1204,97 @@ thinkingFormEl.addEventListener("submit", async (event) => {
   setThinkingBusy(false);
 });
 
+function addToolEvent(event) {
+  state.toolEvents.push(event);
+  if (event.type === "agent_model_request") toolsStatusEl.textContent = `Calling model · turn ${event.turn}`;
+  if (event.type === "model_tool_call") toolsStatusEl.textContent = "Tool requested";
+  if (event.type === "agent_tool_start") toolsStatusEl.textContent = "Agent searching";
+  if (event.type === "agent_tool_result") toolsStatusEl.textContent = "Sources returned";
+  if (event.type === "model_response") toolsStatusEl.textContent = "Model answered";
+  if (event.type === "done") toolsStatusEl.textContent = "Done";
+  renderToolDemo();
+}
+
+toolsFormEl.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const question = toolsQuestionEl.value.trim();
+  if (!question || state.toolsBusy) return;
+
+  clearToolDemo();
+  setToolsBusy(true);
+  toolsErrorEl.hidden = true;
+  toolsErrorEl.textContent = "";
+
+  try {
+    const response = await fetch("./api/tool-demo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question,
+        searchEnabled: webSearchEnabledEl.checked,
+      }),
+    });
+    if (!response.ok) throw new Error(await responseError(response));
+    if (response.headers.get("X-Tutorial-Tool-API-Version") !== "1") {
+      throw new Error("The page and tool demo versions do not match. Refresh the page.");
+    }
+    if (!response.body) throw new Error("The server returned no tool trace.");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const trace = JSON.parse(line);
+        addToolEvent(trace);
+        if (trace.type === "error") throw new Error(trace.error || "The tool loop failed.");
+      }
+    }
+    if (buffer.trim()) {
+      const trace = JSON.parse(buffer);
+      addToolEvent(trace);
+      if (trace.type === "error") throw new Error(trace.error || "The tool loop failed.");
+    }
+    if (!state.toolEvents.some((trace) => trace.type === "done")) {
+      throw new Error("The tool trace ended before the agent loop finished.");
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!state.toolEvents.some((event) => event.type === "error")) {
+      addToolEvent({ type: "error", error: message, at: Date.now() });
+    }
+    toolsErrorEl.textContent = message;
+    toolsErrorEl.hidden = false;
+    toolsStatusEl.textContent = "Error";
+  } finally {
+    setToolsBusy(false);
+  }
+});
+
+webSearchEnabledEl.addEventListener("change", () => {
+  runToolsEl.textContent = webSearchEnabledEl.checked ? "Ask with web search" : "Ask without web search";
+});
+
+replayToolsEl.addEventListener("click", replayToolDemo);
+
 for (const tab of tabs) {
   tab.addEventListener("click", () => {
     state.view = tab.dataset.view;
     workspaceEl.dataset.view = state.view;
     const comparing = state.view === "compare";
     const thinking = state.view === "thinking";
-    const standalone = comparing || thinking;
+    const tools = state.view === "tools";
+    const standalone = comparing || thinking || tools;
     workspaceEl.hidden = standalone;
     comparisonWorkspaceEl.hidden = !comparing;
     thinkingWorkspaceEl.hidden = !thinking;
+    toolsWorkspaceEl.hidden = !tools;
     newChatEl.textContent = standalone ? "Clear results" : "New chat";
     for (const candidate of tabs) {
       const active = candidate === tab;
@@ -1029,6 +1305,7 @@ for (const tab of tabs) {
       renderDetailHeading();
       renderStage();
     }
+    if (tools) renderToolDemo();
   });
 }
 
@@ -1055,5 +1332,6 @@ comparisonPromptEl.value = comparisonPrompts.nyc;
 thinkingPromptEl.value = thinkingPrompts.numbers;
 renderTranscript();
 renderStage();
+renderToolDemo();
 tabs[0].setAttribute("aria-pressed", "true");
 loadConfig();

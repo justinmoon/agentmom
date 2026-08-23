@@ -11,6 +11,8 @@
   --agent-soft: #dcece7;
   --model: #6b4ba1;
   --model-soft: #e9e0f5;
+  --web: #9b5d13;
+  --web-soft: #f5e6ce;
   --error: #9b302c;
   --shadow: 0 12px 34px rgb(44 40 31 / 9%);
 }
@@ -28,6 +30,8 @@
     --agent-soft: #203a34;
     --model: #bea2e8;
     --model-soft: #352a47;
+    --web: #e6aa62;
+    --web-soft: #3c3020;
     --error: #ef8f87;
     --shadow: 0 12px 34px rgb(0 0 0 / 24%);
   }
@@ -383,6 +387,289 @@ h2 {
 .thinking-answer {
   min-height: 170px;
   padding-top: 9px;
+}
+
+.tools-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 1px;
+  margin-top: 24px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--line);
+}
+
+.tools-form,
+.tool-outcome {
+  min-width: 0;
+  padding: 20px;
+  background: var(--surface);
+}
+
+.tools-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tools-form > label:not(.tool-toggle) {
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+.tools-form textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline-color: var(--agent);
+  background: var(--surface);
+  color: var(--ink);
+  line-height: 1.45;
+}
+
+.tool-model-note {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 3px 12px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tool-model-note .snapshot-label {
+  grid-column: 1 / -1;
+}
+
+.tool-model-note strong {
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.tool-model-note small,
+.tool-toggle small {
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.tool-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 11px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.tool-toggle:has(input:checked) {
+  border-color: var(--agent);
+  background: var(--agent-soft);
+}
+
+.tool-toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--agent);
+}
+
+.tool-toggle span,
+.tool-toggle strong,
+.tool-toggle small {
+  display: block;
+}
+
+.tool-toggle code {
+  color: var(--agent);
+}
+
+.tools-form .button {
+  align-self: flex-start;
+}
+
+.tool-outcome {
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-outcome-head,
+.tool-loop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.tool-outcome-head h3,
+.tool-loop-head h3 {
+  margin: 4px 0 0;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.tool-answer {
+  min-height: 150px;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.tool-answer.empty {
+  color: var(--muted);
+}
+
+.tool-quick-trace {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: auto 0 0;
+  padding: 18px 0 0;
+  list-style: none;
+}
+
+.tool-quick-trace li {
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.tool-quick-trace li.done {
+  border-color: var(--agent);
+  background: var(--agent-soft);
+  color: var(--agent);
+}
+
+.tool-loop {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.tool-lanes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 20px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.tool-loop-events {
+  display: flex;
+  min-height: 190px;
+  flex-direction: column;
+  gap: 9px;
+  margin: 8px 0 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background:
+    linear-gradient(to right, transparent calc(25% - 1px), var(--line) 25%, transparent calc(25% + 1px)),
+    linear-gradient(to right, transparent calc(50% - 1px), var(--line) 50%, transparent calc(50% + 1px)),
+    linear-gradient(to right, transparent calc(75% - 1px), var(--line) 75%, transparent calc(75% + 1px));
+  list-style: none;
+}
+
+.tool-loop-empty {
+  margin: auto;
+  color: var(--muted);
+}
+
+.tool-loop-event {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tool-event-card {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  box-shadow: 0 4px 14px rgb(44 40 31 / 6%);
+}
+
+.tool-event-card strong,
+.tool-event-card small {
+  display: block;
+}
+
+.tool-event-card strong {
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.tool-event-card small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.tool-loop-event.actor-user .tool-event-card {
+  grid-column: 1;
+  border-color: var(--agent);
+}
+
+.tool-loop-event.actor-agent .tool-event-card {
+  grid-column: 2;
+  border-color: var(--agent);
+  background: var(--agent-soft);
+}
+
+.tool-loop-event.actor-model .tool-event-card {
+  grid-column: 3;
+  border-color: var(--model);
+  background: var(--model-soft);
+}
+
+.tool-loop-event.actor-web .tool-event-card {
+  grid-column: 4;
+  border-color: var(--web);
+  background: var(--web-soft);
+}
+
+.tool-raw {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.tool-raw summary {
+  padding: 11px 13px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.tool-raw pre {
+  max-height: 420px;
+  margin: 0;
+  overflow: auto;
+  padding: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .agent-area,
@@ -1073,6 +1360,10 @@ h2 {
   .thinking-trace {
     height: 190px;
   }
+
+  .tools-intro {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 560px) {
@@ -1131,6 +1422,30 @@ h2 {
 
   .comparison-composer {
     flex-direction: column;
+  }
+
+  .tool-model-note {
+    grid-template-columns: 1fr;
+  }
+
+  .tool-model-note .snapshot-label {
+    grid-column: 1;
+  }
+
+  .tool-lanes {
+    display: none;
+  }
+
+  .tool-loop-events {
+    background: none;
+  }
+
+  .tool-loop-event {
+    display: block;
+  }
+
+  .tool-event-card {
+    width: 100%;
   }
 }
 

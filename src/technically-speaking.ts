@@ -1,11 +1,33 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AppConfig } from "./config.js";
+import { executeBraveWebSearch } from "./web-search.js";
 
 const COMPARISON_MODELS = new Set([
   "meta-llama/llama-3.2-1b-instruct",
   "deepseek/deepseek-v3.2",
   "openai/gpt-5.6-luna"
 ]);
+const TOOL_DEMO_MODEL = "openai/gpt-oss-20b";
+const TOOL_DEMO_SYSTEM_PROMPT =
+  "You are part of a teaching demo about agent tools. Your knowledge cutoff is June 2024. Never guess facts from after that date. If web_search is available, request it once before answering and use its sources. If it is not available, state that you cannot verify the answer without current information. Keep the final answer to two plain sentences.";
+const WEB_SEARCH_TOOL = {
+  type: "function",
+  function: {
+    name: "web_search",
+    description: "Search the web for current, source-grounded information. The agent executes this tool.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "A focused web search query"
+        }
+      },
+      required: ["query"],
+      additionalProperties: false
+    }
+  }
+} as const;
 
 type MessagePart = { type: "text"; text: string };
 type TutorialMessage = { role: "user" | "assistant"; content: MessagePart[] };
@@ -137,6 +159,15 @@ function reasoningText(delta: Record<string, unknown> | undefined): string {
     .join("");
 }
 
+function openRouterHeaders(req: IncomingMessage, apiKey: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+    "HTTP-Referer": `${req.headers["x-forwarded-proto"] === "https" ? "https" : "http"}://${req.headers.host ?? "localhost"}/technically-speaking/`,
+    "X-Title": "Agent transcript tutorial"
+  };
+}
+
 async function handleChat(req: IncomingMessage, res: ServerResponse, config: AppConfig): Promise<void> {
   let chat: TutorialChat;
   try {
@@ -172,10 +203,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse, config: App
     upstream = await fetch(chatUrl, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${config.openRouterApiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": `${req.headers["x-forwarded-proto"] === "https" ? "https" : "http"}://${req.headers.host ?? "localhost"}/technically-speaking/`,
-        "X-Title": "Agent transcript tutorial"
+        ...openRouterHeaders(req, config.openRouterApiKey)
       },
       body: JSON.stringify({
         model: chat.model,
@@ -285,6 +313,236 @@ async function handleChat(req: IncomingMessage, res: ServerResponse, config: App
   }
 }
 
+type ToolDemoModelResponse = {
+  message: Record<string, unknown>;
+  model?: string;
+  usage?: unknown;
+};
+
+async function callToolDemoModel(
+  req: IncomingMessage,
+  config: AppConfig,
+  messages: Array<Record<string, unknown>>,
+  offerSearch: boolean,
+  signal: AbortSignal
+): Promise<ToolDemoModelResponse> {
+  const chatUrl = process.env.OPENROUTER_CHAT_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
+  const model = process.env.TECHNICALLY_SPEAKING_TOOL_MODEL?.trim() || TOOL_DEMO_MODEL;
+  const response = await fetch(chatUrl, {
+    method: "POST",
+    headers: openRouterHeaders(req, config.openRouterApiKey!),
+    body: JSON.stringify({
+      model,
+      messages,
+      stream: false,
+      max_completion_tokens: 512,
+      reasoning: { effort: "low", exclude: true },
+      ...(offerSearch
+        ? {
+            tools: [WEB_SEARCH_TOOL],
+            tool_choice: "auto",
+            parallel_tool_calls: false
+          }
+        : {})
+    }),
+    signal
+  });
+
+  const body = record(await response.json().catch(() => undefined));
+  if (!response.ok) {
+    const error = record(body?.error);
+    throw new Error(typeof error?.message === "string" ? error.message : `OpenRouter returned ${response.status}.`);
+  }
+  const choices = Array.isArray(body?.choices) ? body.choices : [];
+  const choice = record(choices[0]);
+  const message = record(choice?.message);
+  if (!message) throw new Error("The tool demo model returned no message.");
+  return {
+    message,
+    model: typeof body?.model === "string" ? body.model : undefined,
+    usage: body?.usage
+  };
+}
+
+function modelText(message: Record<string, unknown>): string {
+  if (typeof message.content === "string") return message.content.trim();
+  if (!Array.isArray(message.content)) return "";
+  return message.content
+    .map(record)
+    .filter((part): part is Record<string, unknown> => part?.type === "text" && typeof part.text === "string")
+    .map((part) => part.text as string)
+    .join("")
+    .trim();
+}
+
+function toolCallFromMessage(message: Record<string, unknown>): {
+  id: string;
+  name: string;
+  argumentsText: string;
+} | undefined {
+  const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+  const call = record(calls[0]);
+  const fn = record(call?.function);
+  if (!call || !fn) return undefined;
+  return {
+    id: typeof call.id === "string" && call.id ? call.id : "tool-call-1",
+    name: typeof fn.name === "string" ? fn.name : "",
+    argumentsText: typeof fn.arguments === "string" ? fn.arguments : "{}"
+  };
+}
+
+function toolArguments(call: { name: string; argumentsText: string }): { query: string } {
+  if (call.name !== "web_search") throw new Error(`The model requested an unknown tool: ${call.name || "unnamed"}`);
+  let args: Record<string, unknown> | undefined;
+  try {
+    args = record(JSON.parse(call.argumentsText));
+  } catch {
+    throw new Error("The model returned invalid web_search arguments.");
+  }
+  const query = typeof args?.query === "string" ? args.query.trim() : "";
+  if (!query) throw new Error("The model returned an empty web_search query.");
+  return { query: query.slice(0, 400) };
+}
+
+function tutorialTrace(res: ServerResponse, event: Record<string, unknown>): void {
+  streamEvent(res, { at: Date.now(), ...event });
+}
+
+async function handleToolDemo(req: IncomingMessage, res: ServerResponse, config: AppConfig): Promise<void> {
+  let input: Record<string, unknown> | undefined;
+  try {
+    input = record(await readJsonBody(req));
+  } catch (error) {
+    sendJson(res, { error: error instanceof Error ? error.message : String(error) }, 400);
+    return;
+  }
+  const question = typeof input?.question === "string" ? input.question.trim().slice(0, 600) : "";
+  const searchEnabled = input?.searchEnabled === true;
+  if (!question) {
+    sendJson(res, { error: "Question is required." }, 400);
+    return;
+  }
+  if (!config.openRouterApiKey) {
+    sendJson(res, { error: "OpenRouter is not configured." }, 503);
+    return;
+  }
+  if (searchEnabled && !config.braveApiKey) {
+    sendJson(res, { error: "Web search is not configured." }, 503);
+    return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "application/x-ndjson; charset=utf-8",
+    "Cache-Control": "no-store",
+    Connection: "keep-alive",
+    "X-Tutorial-Tool-API-Version": "1"
+  });
+
+  const abortController = new AbortController();
+  req.on("aborted", () => abortController.abort());
+  res.on("close", () => {
+    if (!res.writableEnded) abortController.abort();
+  });
+
+  const model = process.env.TECHNICALLY_SPEAKING_TOOL_MODEL?.trim() || TOOL_DEMO_MODEL;
+  const messages: Array<Record<string, unknown>> = [
+    { role: "system", content: TOOL_DEMO_SYSTEM_PROMPT },
+    { role: "user", content: question }
+  ];
+  let modelCalls = 0;
+  let toolCalls = 0;
+
+  try {
+    tutorialTrace(res, { type: "user_message", question });
+    tutorialTrace(res, {
+      type: "agent_model_request",
+      turn: 1,
+      model,
+      tools: searchEnabled ? [WEB_SEARCH_TOOL] : [],
+      messages: structuredClone(messages)
+    });
+
+    const first = await callToolDemoModel(req, config, messages, searchEnabled, abortController.signal);
+    modelCalls += 1;
+
+    if (!searchEnabled) {
+      const answer = modelText(first.message);
+      if (!answer) throw new Error("The model returned no answer.");
+      tutorialTrace(res, { type: "model_response", turn: 1, text: answer, usage: first.usage });
+      tutorialTrace(res, { type: "agent_user_response", text: answer });
+      tutorialTrace(res, { type: "done", searchEnabled, modelCalls, toolCalls });
+      res.end();
+      return;
+    }
+
+    const call = toolCallFromMessage(first.message);
+    if (!call) throw new Error("The model answered without requesting web_search. Try again.");
+    const args = toolArguments(call);
+    toolCalls += 1;
+    tutorialTrace(res, {
+      type: "model_tool_call",
+      turn: 1,
+      toolCallId: call.id,
+      name: call.name,
+      arguments: args
+    });
+    tutorialTrace(res, { type: "agent_tool_start", toolCallId: call.id, name: call.name, arguments: args });
+
+    const result = await executeBraveWebSearch(
+      config,
+      { query: args.query, max_urls: 3, max_snippets: 8, max_tokens: 2048 },
+      abortController.signal
+    );
+    const resultText = result.content[0].text;
+    tutorialTrace(res, {
+      type: "agent_tool_result",
+      toolCallId: call.id,
+      name: call.name,
+      text: resultText,
+      sources: result.details.sources
+    });
+
+    const assistantToolCall = {
+      role: "assistant",
+      content: typeof first.message.content === "string" ? first.message.content : null,
+      tool_calls: [
+        {
+          id: call.id,
+          type: "function",
+          function: { name: call.name, arguments: JSON.stringify(args) }
+        }
+      ]
+    };
+    messages.push(assistantToolCall, {
+      role: "tool",
+      tool_call_id: call.id,
+      name: call.name,
+      content: resultText
+    });
+    tutorialTrace(res, {
+      type: "agent_model_request",
+      turn: 2,
+      model,
+      tools: [],
+      messages: structuredClone(messages)
+    });
+
+    const second = await callToolDemoModel(req, config, messages, false, abortController.signal);
+    modelCalls += 1;
+    const answer = modelText(second.message);
+    if (!answer) throw new Error("The model returned no final answer after web_search.");
+    tutorialTrace(res, { type: "model_response", turn: 2, text: answer, usage: second.usage });
+    tutorialTrace(res, { type: "agent_user_response", text: answer });
+    tutorialTrace(res, { type: "done", searchEnabled, modelCalls, toolCalls });
+    res.end();
+  } catch (error) {
+    if (!res.writableEnded) {
+      tutorialTrace(res, { type: "error", error: error instanceof Error ? error.message : String(error) });
+      res.end();
+    }
+  }
+}
+
 export async function handleTechnicallySpeakingApi(
   pathname: string,
   req: IncomingMessage,
@@ -303,6 +561,10 @@ export async function handleTechnicallySpeakingApi(
   }
   if (pathname === "/technically-speaking/api/chat" && req.method === "POST") {
     await handleChat(req, res, config);
+    return;
+  }
+  if (pathname === "/technically-speaking/api/tool-demo" && req.method === "POST") {
+    await handleToolDemo(req, res, config);
     return;
   }
   sendJson(res, { error: "Not found" }, 404);
