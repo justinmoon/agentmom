@@ -551,119 +551,6 @@ h2 {
   color: var(--agent);
 }
 
-.tool-contract {
-  margin-top: 24px;
-  padding: 20px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-}
-
-.tool-contract-head,
-.tool-request-panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.tool-contract-head h3 {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 500;
-}
-
-.tool-contract-intro,
-.tool-protocol-note {
-  color: var(--muted);
-  font-size: 0.82rem;
-  line-height: 1.5;
-}
-
-.tool-contract-intro {
-  max-width: 760px;
-  margin-top: 12px;
-}
-
-.tool-request-diff {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.tool-request-panel {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface-2);
-}
-
-.tool-request-panel.changed-panel {
-  border-color: var(--agent);
-}
-
-.tool-request-panel-head {
-  padding: 11px 13px;
-  border-bottom: 1px solid var(--line);
-}
-
-.tool-request-panel-head strong {
-  font-size: 0.78rem;
-  font-weight: 500;
-}
-
-.unchanged-badge,
-.change-badge {
-  padding: 3px 7px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: 0.65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.change-badge.enabled,
-#tool-request-change-status.enabled {
-  border-color: var(--agent);
-  background: var(--agent-soft);
-  color: var(--agent);
-}
-
-.tool-request-panel pre {
-  height: 260px;
-  margin: 0;
-  overflow: auto;
-  padding: 13px;
-  font-size: 0.7rem;
-  line-height: 1.45;
-  white-space: pre-wrap;
-}
-
-.tool-choice-note {
-  min-height: 58px;
-  margin: 0;
-  padding: 10px 13px;
-  border-top: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 0.72rem;
-  line-height: 1.4;
-}
-
-.tool-protocol-note {
-  margin-top: 14px;
-  padding: 11px 13px;
-  border-left: 3px solid var(--model);
-  background: var(--model-soft);
-  color: var(--ink);
-}
-
-.tool-protocol-note code {
-  color: var(--model);
-}
-
 .tool-loop {
   margin-top: 24px;
   padding-top: 24px;
@@ -1650,9 +1537,6 @@ h2 {
     grid-template-columns: 1fr;
   }
 
-  .tool-request-diff {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 560px) {

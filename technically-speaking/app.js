@@ -40,11 +40,6 @@ const toolQuickTraceEl = document.querySelector("#tool-quick-trace");
 const toolLoopEventsEl = document.querySelector("#tool-loop-events");
 const toolRawJsonEl = document.querySelector("#tool-raw-json");
 const replayToolsEl = document.querySelector("#replay-tools");
-const toolRequestChangeStatusEl = document.querySelector("#tool-request-change-status");
-const toolSystemPromptEl = document.querySelector("#tool-system-prompt");
-const toolRequestFieldsEl = document.querySelector("#tool-request-fields");
-const toolFieldsBadgeEl = document.querySelector("#tool-fields-badge");
-const toolChoiceNoteEl = document.querySelector("#tool-choice-note");
 const toolResultsDialogEl = document.querySelector("#tool-results-dialog");
 const toolResultsTitleEl = document.querySelector("#tool-results-title");
 const toolResultsQueryEl = document.querySelector("#tool-results-query");
@@ -89,7 +84,6 @@ const state = {
   toolsBusy: false,
   toolEvents: [],
   toolReplayTimer: null,
-  toolDemoConfig: null,
 };
 
 function textPart(text) {
@@ -408,42 +402,6 @@ function showToolResults(event) {
 
   toolResultTextEl.textContent = event.text || "No text returned.";
   toolResultsDialogEl.showModal();
-}
-
-function renderToolRequestPreview() {
-  const enabled = webSearchEnabledEl.checked;
-  const config = state.toolDemoConfig;
-  toolRequestChangeStatusEl.textContent = enabled ? "Tool contract added" : "No tool sent";
-  toolRequestChangeStatusEl.classList.toggle("enabled", enabled);
-  toolFieldsBadgeEl.textContent = enabled ? "Added" : "Omitted";
-  toolFieldsBadgeEl.classList.toggle("enabled", enabled);
-
-  if (!config) {
-    toolSystemPromptEl.textContent = "Loading exact system message…";
-    toolRequestFieldsEl.textContent = enabled ? "Loading exact tool contract…" : "No tool-related fields are sent.";
-    return;
-  }
-
-  toolSystemPromptEl.textContent = config.systemPrompt;
-  if (!enabled) {
-    toolRequestFieldsEl.textContent = "No tool-related fields are sent.";
-    toolChoiceNoteEl.textContent = "The model receives only the normal messages.";
-    return;
-  }
-
-  toolRequestFieldsEl.textContent = JSON.stringify(
-    {
-      tools: [config.tool],
-      tool_choice: config.toolChoice,
-      parallel_tool_calls: config.parallelToolCalls,
-    },
-    null,
-    2,
-  );
-  toolChoiceNoteEl.textContent =
-    config.toolChoice === "required"
-      ? "required means the model must request the sole enabled tool. The model still writes the search query."
-      : "auto means the model decides whether to request a tool.";
 }
 
 function toolWireView(event) {
@@ -1458,7 +1416,6 @@ toolsFormEl.addEventListener("submit", async (event) => {
 
 webSearchEnabledEl.addEventListener("change", () => {
   runToolsEl.textContent = webSearchEnabledEl.checked ? "Ask with web search" : "Ask without web search";
-  renderToolRequestPreview();
 });
 
 replayToolsEl.addEventListener("click", replayToolDemo);
@@ -1509,14 +1466,6 @@ async function loadConfig() {
     if (Number.isFinite(config.pricing?.outputPerMillion)) {
       state.pricing.outputPerMillion = config.pricing.outputPerMillion;
     }
-    if (
-      typeof config.toolDemo?.systemPrompt === "string" &&
-      config.toolDemo?.tool &&
-      typeof config.toolDemo?.toolChoice === "string"
-    ) {
-      state.toolDemoConfig = config.toolDemo;
-      renderToolRequestPreview();
-    }
     renderDetailHeading();
     if (state.view === "tokens") renderStage();
   } catch {
@@ -1529,6 +1478,5 @@ thinkingPromptEl.value = thinkingPrompts.numbers;
 renderTranscript();
 renderStage();
 renderToolDemo();
-renderToolRequestPreview();
 tabs[0].setAttribute("aria-pressed", "true");
 loadConfig();

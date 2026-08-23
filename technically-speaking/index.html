@@ -312,44 +312,6 @@
           </article>
         </div>
 
-        <section class="tool-contract" aria-labelledby="tool-contract-heading">
-          <header class="tool-contract-head">
-            <div>
-              <p class="eyebrow">What the model receives</p>
-              <h3 id="tool-contract-heading">A tool is a name, description, and argument schema</h3>
-            </div>
-            <span id="tool-request-change-status" class="count">No tool sent</span>
-          </header>
-          <p class="tool-contract-intro">
-            The model never gets the Brave key or search code. The agent sends a tool contract, reads the model’s structured request, then runs the code itself.
-          </p>
-
-          <div class="tool-request-diff">
-            <article class="tool-request-panel">
-              <div class="tool-request-panel-head">
-                <strong>System message</strong>
-                <span class="unchanged-badge">Unchanged</span>
-              </div>
-              <pre><code id="tool-system-prompt">Loading exact system message…</code></pre>
-            </article>
-
-            <article class="tool-request-panel changed-panel">
-              <div class="tool-request-panel-head">
-                <strong>Tool fields in the API request</strong>
-                <span id="tool-fields-badge" class="change-badge">Omitted</span>
-              </div>
-              <pre><code id="tool-request-fields">No tool-related fields are sent.</code></pre>
-              <p id="tool-choice-note" class="tool-choice-note">
-                The model receives only the normal messages.
-              </p>
-            </article>
-          </div>
-
-          <p class="tool-protocol-note">
-            No keyword triggers the search. The API returns a structured <code>tool_calls</code> field. Click the request and response cards below to see the real JSON.
-          </p>
-        </section>
-
         <section class="tool-loop" aria-labelledby="tool-loop-heading">
           <div class="tool-loop-head">
             <div>

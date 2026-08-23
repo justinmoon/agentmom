@@ -606,16 +606,8 @@ export async function handleTechnicallySpeakingApi(
   config: AppConfig
 ): Promise<void> {
   if (pathname === "/technically-speaking/api/config" && req.method === "GET") {
-    const toolModel = process.env.TECHNICALLY_SPEAKING_TOOL_MODEL?.trim() || TOOL_DEMO_MODEL;
     sendJson(res, {
       model: config.openRouterModel,
-      toolDemo: {
-        model: toolModel,
-        systemPrompt: TOOL_DEMO_SYSTEM_PROMPT,
-        tool: WEB_SEARCH_TOOL,
-        toolChoice: "required",
-        parallelToolCalls: false
-      },
       pricing: {
         inputPerMillion: priceFromEnvironment("OPENROUTER_INPUT_PRICE_PER_MILLION", 0.2),
         outputPerMillion: priceFromEnvironment("OPENROUTER_OUTPUT_PRICE_PER_MILLION", 1.2)

@@ -189,18 +189,14 @@ try {
   assert.match(pageHtml, /9\. Tool calls/);
   assert.match(pageHtml, /Who actually searches the web/);
   assert.match(pageHtml, /tool-results-dialog/);
-  assert.match(pageHtml, /A tool is a name, description, and argument schema/);
   assert.match(pageHtml, /tool-wire-dialog/);
 
   const config = await fetch(`${baseUrl}/technically-speaking/api/config`, { headers });
   assert.equal(config.status, 200);
-  const configBody = await config.json();
-  assert.equal(configBody.model, "openai/gpt-5.6-luna");
-  assert.deepEqual(configBody.pricing, { inputPerMillion: 0.2, outputPerMillion: 1.2 });
-  assert.equal(configBody.toolDemo.model, "openai/gpt-oss-20b");
-  assert.match(configBody.toolDemo.systemPrompt, /knowledge ends on June 30, 2024/);
-  assert.equal(configBody.toolDemo.tool.function.name, "web_search");
-  assert.equal(configBody.toolDemo.toolChoice, "required");
+  assert.deepEqual(await config.json(), {
+    model: "openai/gpt-5.6-luna",
+    pricing: { inputPerMillion: 0.2, outputPerMillion: 1.2 }
+  });
 
   const chat = await fetch(`${baseUrl}/technically-speaking/api/chat`, {
     method: "POST",
