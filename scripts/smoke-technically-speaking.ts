@@ -43,8 +43,12 @@ const upstream = createServer(async (req, res) => {
   receivedRequests.push(request);
 
   if (request.stream === false) {
+    const userMessage = request.messages.find((message: Record<string, unknown>) => message.role === "user");
+    const emptyResponse = typeof userMessage?.content === "string" && userMessage.content.includes("EMPTY_RESPONSE_TEST");
     const toolMessage = request.messages.find((message: Record<string, unknown>) => message.role === "tool");
-    const message = request.tools
+    const message = emptyResponse
+      ? { role: "assistant", content: "" }
+      : request.tools
       ? {
           role: "assistant",
           content: null,
@@ -72,7 +76,7 @@ const upstream = createServer(async (req, res) => {
     res.end(
       JSON.stringify({
         model: request.model,
-        choices: [{ message }],
+        choices: [{ message, finish_reason: emptyResponse ? "length" : "stop" }],
         usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 }
       })
     );
@@ -272,7 +276,8 @@ try {
   );
   assert.equal(receivedRequests[3].model, "openai/gpt-oss-20b");
   assert.equal(receivedRequests[3].tools, undefined);
-  assert.deepEqual(receivedRequests[3].reasoning, { effort: "low", exclude: true });
+  assert.equal(receivedRequests[3].max_completion_tokens, 1024);
+  assert.deepEqual(receivedRequests[3].reasoning, { effort: "minimal", exclude: true });
   assert.equal(searchRequests.length, 0);
   assert.match(withoutSearchEvents.find((event) => event.type === "agent_user_response").text, /cannot verify/);
 
@@ -318,6 +323,23 @@ try {
     modelCalls: 2,
     toolCalls: 1
   });
+
+  const emptyResponse = await fetch(`${baseUrl}/technically-speaking/api/tool-demo`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({ question: "EMPTY_RESPONSE_TEST", searchEnabled: false })
+  });
+  assert.equal(emptyResponse.status, 200);
+  const emptyEvents = (await emptyResponse.text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(
+    emptyEvents.map((event) => event.type),
+    ["user_message", "agent_model_request", "model_no_answer", "agent_user_response", "done"]
+  );
+  assert.equal(emptyEvents.find((event) => event.type === "model_no_answer").finishReason, "length");
+  assert.match(emptyEvents.find((event) => event.type === "agent_user_response").text, /Enable web_search/);
 
   console.log("technically-speaking smoke ok");
 } finally {

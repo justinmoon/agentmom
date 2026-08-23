@@ -304,6 +304,13 @@ function toolEventPresentation(event) {
   if (event.type === "model_response") {
     return { actor: "model", title: "Model answers the agent", detail: event.text };
   }
+  if (event.type === "model_no_answer") {
+    return {
+      actor: "model",
+      title: "Model returns no visible answer",
+      detail: event.finishReason ? `Finish reason: ${event.finishReason}` : "Empty text response",
+    };
+  }
   if (event.type === "agent_user_response") {
     return { actor: "agent", title: "Agent returns the answer", detail: event.text };
   }
@@ -323,6 +330,7 @@ function quickToolLabel(event) {
   if (event.type === "agent_tool_start") return "Agent searches";
   if (event.type === "agent_tool_result") return "Sources returned";
   if (event.type === "model_response") return "Model answers";
+  if (event.type === "model_no_answer") return "No model answer";
   if (event.type === "agent_user_response") return "User receives answer";
   return null;
 }

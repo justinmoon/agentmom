@@ -317,6 +317,7 @@ type ToolDemoModelResponse = {
   message: Record<string, unknown>;
   model?: string;
   usage?: unknown;
+  finishReason?: string;
 };
 
 async function callToolDemoModel(
@@ -335,8 +336,8 @@ async function callToolDemoModel(
       model,
       messages,
       stream: false,
-      max_completion_tokens: 512,
-      reasoning: { effort: "low", exclude: true },
+      max_completion_tokens: 1024,
+      reasoning: { effort: "minimal", exclude: true },
       ...(offerSearch
         ? {
             tools: [WEB_SEARCH_TOOL],
@@ -360,7 +361,8 @@ async function callToolDemoModel(
   return {
     message,
     model: typeof body?.model === "string" ? body.model : undefined,
-    usage: body?.usage
+    usage: body?.usage,
+    finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined
   };
 }
 
@@ -467,9 +469,27 @@ async function handleToolDemo(req: IncomingMessage, res: ServerResponse, config:
 
     if (!searchEnabled) {
       const answer = modelText(first.message);
-      if (!answer) throw new Error("The model returned no answer.");
-      tutorialTrace(res, { type: "model_response", turn: 1, text: answer, usage: first.usage });
-      tutorialTrace(res, { type: "agent_user_response", text: answer });
+      if (!answer) {
+        const fallback = "The model returned no visible answer. Enable web_search so the agent can check.";
+        tutorialTrace(res, {
+          type: "model_no_answer",
+          turn: 1,
+          finishReason: first.finishReason,
+          usage: first.usage
+        });
+        tutorialTrace(res, { type: "agent_user_response", text: fallback, generatedBy: "agent" });
+        tutorialTrace(res, { type: "done", searchEnabled, modelCalls, toolCalls });
+        res.end();
+        return;
+      }
+      tutorialTrace(res, {
+        type: "model_response",
+        turn: 1,
+        text: answer,
+        finishReason: first.finishReason,
+        usage: first.usage
+      });
+      tutorialTrace(res, { type: "agent_user_response", text: answer, generatedBy: "model" });
       tutorialTrace(res, { type: "done", searchEnabled, modelCalls, toolCalls });
       res.end();
       return;
@@ -530,9 +550,28 @@ async function handleToolDemo(req: IncomingMessage, res: ServerResponse, config:
     const second = await callToolDemoModel(req, config, messages, false, abortController.signal);
     modelCalls += 1;
     const answer = modelText(second.message);
-    if (!answer) throw new Error("The model returned no final answer after web_search.");
-    tutorialTrace(res, { type: "model_response", turn: 2, text: answer, usage: second.usage });
-    tutorialTrace(res, { type: "agent_user_response", text: answer });
+    if (!answer) {
+      const fallback =
+        "The search returned sources, but the model returned no visible answer. Open the source results to inspect them.";
+      tutorialTrace(res, {
+        type: "model_no_answer",
+        turn: 2,
+        finishReason: second.finishReason,
+        usage: second.usage
+      });
+      tutorialTrace(res, { type: "agent_user_response", text: fallback, generatedBy: "agent" });
+      tutorialTrace(res, { type: "done", searchEnabled, modelCalls, toolCalls });
+      res.end();
+      return;
+    }
+    tutorialTrace(res, {
+      type: "model_response",
+      turn: 2,
+      text: answer,
+      finishReason: second.finishReason,
+      usage: second.usage
+    });
+    tutorialTrace(res, { type: "agent_user_response", text: answer, generatedBy: "model" });
     tutorialTrace(res, { type: "done", searchEnabled, modelCalls, toolCalls });
     res.end();
   } catch (error) {
