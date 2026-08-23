@@ -115,12 +115,6 @@ const server = createServer(async (req, res) => {
     const tutorialPage =
       url.pathname === "/technically-speaking" || url.pathname.startsWith("/technically-speaking/");
     if (tutorialPage) {
-      if (!currentUser(req)) {
-        if (tutorialApi) return sendError(res, new Error("unauthorized"), 401);
-        res.writeHead(302, { Location: "/" });
-        res.end();
-        return;
-      }
       if (url.pathname === "/technically-speaking") {
         res.writeHead(302, { Location: `/technically-speaking/${url.search}` });
         res.end();

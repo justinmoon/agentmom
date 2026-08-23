@@ -124,7 +124,8 @@ const server = spawn(process.execPath, ["node_modules/tsx/dist/cli.mjs", "src/se
     BRAVE_API_KEY: "smoke-brave-key",
     BRAVE_LLM_CONTEXT_URL: `http://127.0.0.1:${upstreamAddress.port}/search`,
     OPENROUTER_API_KEY: "smoke-openrouter-key",
-    OPENROUTER_CHAT_URL: `http://127.0.0.1:${upstreamAddress.port}`
+    OPENROUTER_CHAT_URL: `http://127.0.0.1:${upstreamAddress.port}`,
+    AGENTMOM_OPENROUTER_MODEL: "openai/gpt-5.6-luna"
   },
   stdio: "ignore"
 });
@@ -147,36 +148,7 @@ try {
   }
   assert.equal(ready, true, "Agent Mom did not start");
 
-  const anonymousPage = await fetch(`${baseUrl}/technically-speaking/`, { redirect: "manual" });
-  assert.equal(anonymousPage.status, 302);
-  assert.equal(anonymousPage.headers.get("location"), "/");
-
-  const anonymousChat = await fetch(`${baseUrl}/technically-speaking/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ systemPrompt: "", messages: [] })
-  });
-  assert.equal(anonymousChat.status, 401);
-  assert.equal(receivedRequests.length, 0, "anonymous request reached OpenRouter");
-
-  const anonymousToolDemo = await fetch(`${baseUrl}/technically-speaking/api/tool-demo`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question: "What changed?", searchEnabled: true })
-  });
-  assert.equal(anonymousToolDemo.status, 401);
-  assert.equal(receivedRequests.length, 0, "anonymous tool demo reached OpenRouter");
-  assert.equal(searchRequests.length, 0, "anonymous tool demo reached Brave");
-
-  const login = await fetch(`${baseUrl}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "user@example.com", password: "password" })
-  });
-  assert.equal(login.status, 200);
-  const cookie = login.headers.get("set-cookie")?.split(";", 1)[0];
-  assert(cookie);
-  const headers = { Cookie: cookie };
+  const headers = {};
 
   const redirect = await fetch(`${baseUrl}/technically-speaking`, { headers, redirect: "manual" });
   assert.equal(redirect.status, 302);
