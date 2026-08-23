@@ -60,6 +60,7 @@ const emptyState: AppState = {
   isRunning: false,
   model: "",
   tools: [],
+  toolDefinitions: [],
   runtime: {
     executor: "local"
   }
@@ -389,6 +390,9 @@ function App() {
               <RightPanel
                 previews={state.previews}
                 skills={state.skills}
+                tools={state.toolDefinitions}
+                events={state.events}
+                isRunning={state.isRunning}
                 workspaceUrl={workspaceUrl}
                 focusSkill={focusSkill}
                 onCollapse={() => setRightPanelOpen(false)}

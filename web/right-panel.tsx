@@ -1,5 +1,7 @@
 import {
+  Braces,
   ExternalLink,
+  ListTree,
   Monitor,
   PanelRightClose,
   Plus,
@@ -9,11 +11,13 @@ import {
   X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PreviewService, SkillSummary } from "../src/types.js";
+import type { PreviewService, SkillSummary, ToolSummary, UiEvent } from "../src/types.js";
 import { SkillsPane } from "./skills-pane.js";
+import { TimelinePane } from "./timeline-pane.js";
+import { ToolsPane } from "./tools-pane.js";
 import "./right-panel.css";
 
-type RightPanelTabType = "preview" | "skills";
+type RightPanelTabType = "preview" | "skills" | "tools" | "timeline";
 
 type RightPanelTab = {
   id: string;
@@ -23,7 +27,9 @@ type RightPanelTab = {
 
 const TAB_TITLES: Record<RightPanelTabType, string> = {
   preview: "Preview",
-  skills: "Skills"
+  skills: "Skills",
+  tools: "Tools",
+  timeline: "Timeline"
 };
 
 const initialRightTabs: RightPanelTab[] = [
@@ -33,6 +39,9 @@ const initialRightTabs: RightPanelTab[] = [
 export function RightPanel({
   previews,
   skills,
+  tools,
+  events,
+  isRunning,
   workspaceUrl,
   focusSkill,
   onCollapse,
@@ -40,6 +49,9 @@ export function RightPanel({
 }: {
   previews: PreviewService[];
   skills: SkillSummary[];
+  tools: ToolSummary[];
+  events: UiEvent[];
+  isRunning: boolean;
   workspaceUrl: (path: string) => string;
   focusSkill?: { name: string; nonce: number };
   onCollapse: () => void;
@@ -58,6 +70,9 @@ export function RightPanel({
     [selectedPreviewId, previews]
   );
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
+  const timelineEventCount = events.filter(
+    (event) => !(event.type === "tool" && event.title.endsWith(" update"))
+  ).length;
 
   useEffect(() => {
     if (previews.length === 0) {
@@ -125,8 +140,8 @@ export function RightPanel({
       <div className="right-tabbar">
         <div className="right-tabs" role="tablist" aria-label="Right panel tabs">
           {tabs.map((tab) => {
-            const TabIcon = tab.type === "skills" ? Sparkles : Monitor;
-            const count = tab.type === "skills" ? skills.length : previews.length;
+            const TabIcon = tab.type === "skills" ? Sparkles : tab.type === "tools" ? Braces : tab.type === "timeline" ? ListTree : Monitor;
+            const count = tab.type === "skills" ? skills.length : tab.type === "tools" ? tools.length : tab.type === "timeline" ? timelineEventCount : previews.length;
             return (
               <div className={tab.id === activeTab?.id ? "right-tab active" : "right-tab"} key={tab.id}>
                 <button
@@ -166,6 +181,14 @@ export function RightPanel({
                 <Sparkles size={14} />
                 <span>Skills</span>
               </button>
+              <button type="button" onClick={() => openTab("tools")}>
+                <Braces size={14} />
+                <span>Tools</span>
+              </button>
+              <button type="button" onClick={() => openTab("timeline")}>
+                <ListTree size={14} />
+                <span>Timeline</span>
+              </button>
             </div>
           )}
           <button type="button" className="panel-icon-button" onClick={onCollapse} title="Collapse panel">
@@ -177,6 +200,10 @@ export function RightPanel({
       <div className="right-panel-body">
         {activeTab?.type === "skills" ? (
           <SkillsPane skills={skills} workspaceUrl={workspaceUrl} focusSkillName={focusSkill?.name} />
+        ) : activeTab?.type === "tools" ? (
+          <ToolsPane tools={tools} />
+        ) : activeTab?.type === "timeline" ? (
+          <TimelinePane events={events} isRunning={isRunning} />
         ) : (
           <PreviewPane
             previews={previews}

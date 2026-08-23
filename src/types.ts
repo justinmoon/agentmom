@@ -153,6 +153,14 @@ export type SkillFileEntry = {
   size: number;
 };
 
+export type ToolSummary = {
+  name: string;
+  label: string;
+  description: string;
+  parameters: unknown;
+  executor: "fly" | "host" | "external";
+};
+
 export const MAX_SKILL_FILE_BYTES = 1024 * 1024;
 
 export type AppState = {
@@ -173,6 +181,7 @@ export type AppState = {
   isRunning: boolean;
   model: string;
   tools: string[];
+  toolDefinitions: ToolSummary[];
   error?: string;
   runtime: {
     executor: "local" | "fly";
