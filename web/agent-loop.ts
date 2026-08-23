@@ -17,9 +17,9 @@ export function buildAgentLoop(events: UiEvent[]): AgentLoopExchange[] {
   const byCallId = new Map<string, AgentLoopExchange>();
 
   for (const event of [...events].reverse()) {
-    const request = /^Model requested ([A-Za-z][\w-]*)$/.exec(event.title);
-    const started = /^([A-Za-z][\w-]*) started$/.exec(event.title);
-    const finished = /^([A-Za-z][\w-]*) (finished|failed)$/.exec(event.title);
+    const request = event.type === "model" ? /^Model requested ([A-Za-z][\w-]*)$/.exec(event.title) : null;
+    const started = event.type === "tool" ? /^([A-Za-z][\w-]*) started$/.exec(event.title) : null;
+    const finished = event.type === "tool" ? /^([A-Za-z][\w-]*) (finished|failed)$/.exec(event.title) : null;
     if (!request && !started && !finished) continue;
 
     const toolName = request?.[1] ?? started?.[1] ?? finished?.[1] ?? "tool";

@@ -8,6 +8,7 @@ const events: UiEvent[] = [
   event("tool", "read update", JSON.stringify({ content: "partial" }), "call-read"),
   event("tool", "read started", JSON.stringify({ path: "index.html" }), "call-read"),
   event("model", "Model requested read", JSON.stringify({ id: "call-read", name: "read", arguments: { path: "index.html" } }), "call-read"),
+  event("agent", "Turn started"),
   event("runtime", "Fly sandbox", "am-noise"),
   event("session", "Started new session", "/tmp/noise")
 ];
