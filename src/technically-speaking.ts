@@ -315,37 +315,44 @@ async function handleChat(req: IncomingMessage, res: ServerResponse, config: App
 
 type ToolDemoModelResponse = {
   message: Record<string, unknown>;
+  rawResponse: Record<string, unknown>;
   model?: string;
   usage?: unknown;
   finishReason?: string;
 };
 
+function toolDemoRequest(
+  model: string,
+  messages: Array<Record<string, unknown>>,
+  offerSearch: boolean
+): Record<string, unknown> {
+  return {
+    model,
+    messages,
+    stream: false,
+    max_completion_tokens: 1024,
+    reasoning: { effort: "minimal", exclude: true },
+    ...(offerSearch
+      ? {
+          tools: [WEB_SEARCH_TOOL],
+          tool_choice: "required",
+          parallel_tool_calls: false
+        }
+      : {})
+  };
+}
+
 async function callToolDemoModel(
   req: IncomingMessage,
   config: AppConfig,
-  messages: Array<Record<string, unknown>>,
-  offerSearch: boolean,
+  requestBody: Record<string, unknown>,
   signal: AbortSignal
 ): Promise<ToolDemoModelResponse> {
   const chatUrl = process.env.OPENROUTER_CHAT_URL?.trim() || "https://openrouter.ai/api/v1/chat/completions";
-  const model = process.env.TECHNICALLY_SPEAKING_TOOL_MODEL?.trim() || TOOL_DEMO_MODEL;
   const response = await fetch(chatUrl, {
     method: "POST",
     headers: openRouterHeaders(req, config.openRouterApiKey!),
-    body: JSON.stringify({
-      model,
-      messages,
-      stream: false,
-      max_completion_tokens: 1024,
-      reasoning: { effort: "minimal", exclude: true },
-      ...(offerSearch
-        ? {
-            tools: [WEB_SEARCH_TOOL],
-            tool_choice: "required",
-            parallel_tool_calls: false
-          }
-        : {})
-    }),
+    body: JSON.stringify(requestBody),
     signal
   });
 
@@ -360,6 +367,7 @@ async function callToolDemoModel(
   if (!message) throw new Error("The tool demo model returned no message.");
   return {
     message,
+    rawResponse: body!,
     model: typeof body?.model === "string" ? body.model : undefined,
     usage: body?.usage,
     finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined
@@ -456,15 +464,17 @@ async function handleToolDemo(req: IncomingMessage, res: ServerResponse, config:
 
   try {
     tutorialTrace(res, { type: "user_message", question });
+    const firstRequest = toolDemoRequest(model, messages, searchEnabled);
     tutorialTrace(res, {
       type: "agent_model_request",
       turn: 1,
       model,
       tools: searchEnabled ? [WEB_SEARCH_TOOL] : [],
-      messages: structuredClone(messages)
+      messages: structuredClone(messages),
+      request: structuredClone(firstRequest)
     });
 
-    const first = await callToolDemoModel(req, config, messages, searchEnabled, abortController.signal);
+    const first = await callToolDemoModel(req, config, firstRequest, abortController.signal);
     modelCalls += 1;
 
     if (!searchEnabled) {
@@ -475,7 +485,8 @@ async function handleToolDemo(req: IncomingMessage, res: ServerResponse, config:
           type: "model_no_answer",
           turn: 1,
           finishReason: first.finishReason,
-          usage: first.usage
+          usage: first.usage,
+          response: first.rawResponse
         });
         tutorialTrace(res, { type: "agent_user_response", text: fallback, generatedBy: "agent" });
         tutorialTrace(res, { type: "done", searchEnabled, modelCalls, toolCalls });
@@ -487,7 +498,8 @@ async function handleToolDemo(req: IncomingMessage, res: ServerResponse, config:
         turn: 1,
         text: answer,
         finishReason: first.finishReason,
-        usage: first.usage
+        usage: first.usage,
+        response: first.rawResponse
       });
       tutorialTrace(res, { type: "agent_user_response", text: answer, generatedBy: "model" });
       tutorialTrace(res, { type: "done", searchEnabled, modelCalls, toolCalls });
@@ -504,7 +516,8 @@ async function handleToolDemo(req: IncomingMessage, res: ServerResponse, config:
       turn: 1,
       toolCallId: call.id,
       name: call.name,
-      arguments: args
+      arguments: args,
+      response: first.rawResponse
     });
     tutorialTrace(res, { type: "agent_tool_start", toolCallId: call.id, name: call.name, arguments: args });
 
@@ -539,15 +552,17 @@ async function handleToolDemo(req: IncomingMessage, res: ServerResponse, config:
       name: call.name,
       content: resultText
     });
+    const secondRequest = toolDemoRequest(model, messages, false);
     tutorialTrace(res, {
       type: "agent_model_request",
       turn: 2,
       model,
       tools: [],
-      messages: structuredClone(messages)
+      messages: structuredClone(messages),
+      request: structuredClone(secondRequest)
     });
 
-    const second = await callToolDemoModel(req, config, messages, false, abortController.signal);
+    const second = await callToolDemoModel(req, config, secondRequest, abortController.signal);
     modelCalls += 1;
     const answer = modelText(second.message);
     if (!answer) {
@@ -557,7 +572,8 @@ async function handleToolDemo(req: IncomingMessage, res: ServerResponse, config:
         type: "model_no_answer",
         turn: 2,
         finishReason: second.finishReason,
-        usage: second.usage
+        usage: second.usage,
+        response: second.rawResponse
       });
       tutorialTrace(res, { type: "agent_user_response", text: fallback, generatedBy: "agent" });
       tutorialTrace(res, { type: "done", searchEnabled, modelCalls, toolCalls });
@@ -569,7 +585,8 @@ async function handleToolDemo(req: IncomingMessage, res: ServerResponse, config:
       turn: 2,
       text: answer,
       finishReason: second.finishReason,
-      usage: second.usage
+      usage: second.usage,
+      response: second.rawResponse
     });
     tutorialTrace(res, { type: "agent_user_response", text: answer, generatedBy: "model" });
     tutorialTrace(res, { type: "done", searchEnabled, modelCalls, toolCalls });
@@ -589,8 +606,16 @@ export async function handleTechnicallySpeakingApi(
   config: AppConfig
 ): Promise<void> {
   if (pathname === "/technically-speaking/api/config" && req.method === "GET") {
+    const toolModel = process.env.TECHNICALLY_SPEAKING_TOOL_MODEL?.trim() || TOOL_DEMO_MODEL;
     sendJson(res, {
       model: config.openRouterModel,
+      toolDemo: {
+        model: toolModel,
+        systemPrompt: TOOL_DEMO_SYSTEM_PROMPT,
+        tool: WEB_SEARCH_TOOL,
+        toolChoice: "required",
+        parallelToolCalls: false
+      },
       pricing: {
         inputPerMillion: priceFromEnvironment("OPENROUTER_INPUT_PRICE_PER_MILLION", 0.2),
         outputPerMillion: priceFromEnvironment("OPENROUTER_OUTPUT_PRICE_PER_MILLION", 1.2)

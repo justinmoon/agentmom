@@ -189,13 +189,18 @@ try {
   assert.match(pageHtml, /9\. Tool calls/);
   assert.match(pageHtml, /Who actually searches the web/);
   assert.match(pageHtml, /tool-results-dialog/);
+  assert.match(pageHtml, /A tool is a name, description, and argument schema/);
+  assert.match(pageHtml, /tool-wire-dialog/);
 
   const config = await fetch(`${baseUrl}/technically-speaking/api/config`, { headers });
   assert.equal(config.status, 200);
-  assert.deepEqual(await config.json(), {
-    model: "openai/gpt-5.6-luna",
-    pricing: { inputPerMillion: 0.2, outputPerMillion: 1.2 }
-  });
+  const configBody = await config.json();
+  assert.equal(configBody.model, "openai/gpt-5.6-luna");
+  assert.deepEqual(configBody.pricing, { inputPerMillion: 0.2, outputPerMillion: 1.2 });
+  assert.equal(configBody.toolDemo.model, "openai/gpt-oss-20b");
+  assert.match(configBody.toolDemo.systemPrompt, /knowledge ends on June 30, 2024/);
+  assert.equal(configBody.toolDemo.tool.function.name, "web_search");
+  assert.equal(configBody.toolDemo.toolChoice, "required");
 
   const chat = await fetch(`${baseUrl}/technically-speaking/api/chat`, {
     method: "POST",
@@ -278,6 +283,11 @@ try {
   assert.equal(receivedRequests[3].tools, undefined);
   assert.equal(receivedRequests[3].max_completion_tokens, 1024);
   assert.deepEqual(receivedRequests[3].reasoning, { effort: "minimal", exclude: true });
+  assert.deepEqual(withoutSearchEvents.find((event) => event.type === "agent_model_request").request, receivedRequests[3]);
+  assert.deepEqual(
+    withoutSearchEvents.find((event) => event.type === "model_response").response.choices[0].message,
+    { role: "assistant", content: "I cannot verify this post-cutoff fact without current information." }
+  );
   assert.equal(searchRequests.length, 0);
   assert.match(withoutSearchEvents.find((event) => event.type === "agent_user_response").text, /cannot verify/);
 
@@ -308,8 +318,18 @@ try {
   assert.equal(receivedRequests[4].tools[0].function.name, "web_search");
   assert.equal(receivedRequests[4].tool_choice, "required");
   assert.equal(receivedRequests[4].parallel_tool_calls, false);
+  assert.deepEqual(withSearchEvents.find((event) => event.type === "agent_model_request").request, receivedRequests[4]);
+  assert.equal(
+    withSearchEvents.find((event) => event.type === "model_tool_call").response.choices[0].message.tool_calls[0]
+      .function.name,
+    "web_search"
+  );
   assert.equal(receivedRequests[5].tools, undefined);
   assert.equal(receivedRequests[5].messages.some((message: Record<string, unknown>) => message.role === "tool"), true);
+  assert.deepEqual(
+    withSearchEvents.filter((event) => event.type === "agent_model_request")[1].request,
+    receivedRequests[5]
+  );
   assert.equal(searchRequests.length, 1);
   assert.match(searchRequests[0], /World Cup/);
   const toolResult = withSearchEvents.find((event) => event.type === "agent_tool_result");

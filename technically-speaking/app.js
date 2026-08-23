@@ -40,11 +40,21 @@ const toolQuickTraceEl = document.querySelector("#tool-quick-trace");
 const toolLoopEventsEl = document.querySelector("#tool-loop-events");
 const toolRawJsonEl = document.querySelector("#tool-raw-json");
 const replayToolsEl = document.querySelector("#replay-tools");
+const toolRequestChangeStatusEl = document.querySelector("#tool-request-change-status");
+const toolSystemPromptEl = document.querySelector("#tool-system-prompt");
+const toolRequestFieldsEl = document.querySelector("#tool-request-fields");
+const toolFieldsBadgeEl = document.querySelector("#tool-fields-badge");
+const toolChoiceNoteEl = document.querySelector("#tool-choice-note");
 const toolResultsDialogEl = document.querySelector("#tool-results-dialog");
 const toolResultsTitleEl = document.querySelector("#tool-results-title");
 const toolResultsQueryEl = document.querySelector("#tool-results-query");
 const toolResultsListEl = document.querySelector("#tool-results-list");
 const toolResultTextEl = document.querySelector("#tool-result-text");
+const toolWireDialogEl = document.querySelector("#tool-wire-dialog");
+const toolWireKickerEl = document.querySelector("#tool-wire-kicker");
+const toolWireTitleEl = document.querySelector("#tool-wire-title");
+const toolWireNoteEl = document.querySelector("#tool-wire-note");
+const toolWireJsonEl = document.querySelector("#tool-wire-json");
 const tabs = [...document.querySelectorAll(".prototype-tab")];
 
 const comparisonPrompts = {
@@ -79,6 +89,7 @@ const state = {
   toolsBusy: false,
   toolEvents: [],
   toolReplayTimer: null,
+  toolDemoConfig: null,
 };
 
 function textPart(text) {
@@ -399,6 +410,77 @@ function showToolResults(event) {
   toolResultsDialogEl.showModal();
 }
 
+function renderToolRequestPreview() {
+  const enabled = webSearchEnabledEl.checked;
+  const config = state.toolDemoConfig;
+  toolRequestChangeStatusEl.textContent = enabled ? "Tool contract added" : "No tool sent";
+  toolRequestChangeStatusEl.classList.toggle("enabled", enabled);
+  toolFieldsBadgeEl.textContent = enabled ? "Added" : "Omitted";
+  toolFieldsBadgeEl.classList.toggle("enabled", enabled);
+
+  if (!config) {
+    toolSystemPromptEl.textContent = "Loading exact system message…";
+    toolRequestFieldsEl.textContent = enabled ? "Loading exact tool contract…" : "No tool-related fields are sent.";
+    return;
+  }
+
+  toolSystemPromptEl.textContent = config.systemPrompt;
+  if (!enabled) {
+    toolRequestFieldsEl.textContent = "No tool-related fields are sent.";
+    toolChoiceNoteEl.textContent = "The model receives only the normal messages.";
+    return;
+  }
+
+  toolRequestFieldsEl.textContent = JSON.stringify(
+    {
+      tools: [config.tool],
+      tool_choice: config.toolChoice,
+      parallel_tool_calls: config.parallelToolCalls,
+    },
+    null,
+    2,
+  );
+  toolChoiceNoteEl.textContent =
+    config.toolChoice === "required"
+      ? "required means the model must request the sole enabled tool. The model still writes the search query."
+      : "auto means the model decides whether to request a tool.";
+}
+
+function toolWireView(event) {
+  if (event.type === "agent_model_request" && event.request) {
+    return {
+      kicker: "Agent → model",
+      title: `Exact request · turn ${event.turn}`,
+      note: "This is the JSON body sent to OpenRouter. HTTP headers and the API key are not shown.",
+      payload: event.request,
+      action: "View exact request",
+    };
+  }
+  if (["model_tool_call", "model_response", "model_no_answer"].includes(event.type) && event.response) {
+    return {
+      kicker: "Model → agent",
+      title: `Exact response · turn ${event.turn}`,
+      note:
+        event.type === "model_tool_call"
+          ? "The tool request is structured data in message.tool_calls. No keyword is parsed from ordinary text."
+          : "This is the JSON response returned by OpenRouter.",
+      payload: event.response,
+      action: "View exact response",
+    };
+  }
+  return null;
+}
+
+function showToolWire(event) {
+  const view = toolWireView(event);
+  if (!view) return;
+  toolWireKickerEl.textContent = view.kicker;
+  toolWireTitleEl.textContent = view.title;
+  toolWireNoteEl.textContent = view.note;
+  toolWireJsonEl.textContent = JSON.stringify(view.payload, null, 2);
+  toolWireDialogEl.showModal();
+}
+
 function renderToolLoop(limit = state.toolEvents.length) {
   toolLoopEventsEl.replaceChildren();
   const visible = state.toolEvents.slice(0, limit);
@@ -416,22 +498,28 @@ function renderToolLoop(limit = state.toolEvents.length) {
     item.className = `tool-loop-event actor-${view.actor}`;
 
     const resultCard = event.type === "agent_tool_result";
-    const card = document.createElement(resultCard ? "button" : "div");
+    const wireView = toolWireView(event);
+    const interactive = resultCard || wireView;
+    const card = document.createElement(interactive ? "button" : "div");
     card.className = "tool-event-card";
     if (resultCard) {
       card.type = "button";
       card.classList.add("tool-result-trigger");
       card.addEventListener("click", () => showToolResults(event));
+    } else if (wireView) {
+      card.type = "button";
+      card.classList.add("tool-wire-trigger");
+      card.addEventListener("click", () => showToolWire(event));
     }
     const title = document.createElement("strong");
     title.textContent = view.title;
     const detail = document.createElement("small");
     detail.textContent = view.detail || "";
     card.append(title, detail);
-    if (resultCard) {
+    if (interactive) {
       const action = document.createElement("span");
       action.className = "tool-event-action";
-      action.textContent = "View results";
+      action.textContent = resultCard ? "View results" : wireView.action;
       card.append(action);
     }
     item.append(card);
@@ -474,6 +562,7 @@ function renderToolDemo() {
 function clearToolDemo() {
   clearToolReplay();
   if (toolResultsDialogEl.open) toolResultsDialogEl.close();
+  if (toolWireDialogEl.open) toolWireDialogEl.close();
   state.toolEvents = [];
   toolsErrorEl.hidden = true;
   toolsErrorEl.textContent = "";
@@ -1369,12 +1458,17 @@ toolsFormEl.addEventListener("submit", async (event) => {
 
 webSearchEnabledEl.addEventListener("change", () => {
   runToolsEl.textContent = webSearchEnabledEl.checked ? "Ask with web search" : "Ask without web search";
+  renderToolRequestPreview();
 });
 
 replayToolsEl.addEventListener("click", replayToolDemo);
 
 toolResultsDialogEl.addEventListener("click", (event) => {
   if (event.target === toolResultsDialogEl) toolResultsDialogEl.close();
+});
+
+toolWireDialogEl.addEventListener("click", (event) => {
+  if (event.target === toolWireDialogEl) toolWireDialogEl.close();
 });
 
 for (const tab of tabs) {
@@ -1415,6 +1509,14 @@ async function loadConfig() {
     if (Number.isFinite(config.pricing?.outputPerMillion)) {
       state.pricing.outputPerMillion = config.pricing.outputPerMillion;
     }
+    if (
+      typeof config.toolDemo?.systemPrompt === "string" &&
+      config.toolDemo?.tool &&
+      typeof config.toolDemo?.toolChoice === "string"
+    ) {
+      state.toolDemoConfig = config.toolDemo;
+      renderToolRequestPreview();
+    }
     renderDetailHeading();
     if (state.view === "tokens") renderStage();
   } catch {
@@ -1427,5 +1529,6 @@ thinkingPromptEl.value = thinkingPrompts.numbers;
 renderTranscript();
 renderStage();
 renderToolDemo();
+renderToolRequestPreview();
 tabs[0].setAttribute("aria-pressed", "true");
 loadConfig();
