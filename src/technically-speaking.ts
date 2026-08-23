@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AppConfig } from "./config.js";
+import type { TutorialVibeManager } from "./tutorial-vibe.js";
 import { executeBraveWebSearch } from "./web-search.js";
 
 const COMPARISON_MODELS = new Set([
@@ -28,6 +29,35 @@ const WEB_SEARCH_TOOL = {
     }
   }
 } as const;
+const BASH_TOOL = {
+  type: "function",
+  function: {
+    name: "bash",
+    description:
+      "Run a Bash command inside the agent's temporary Fly.io website folder. Use it to inspect, create, edit, or download files. The agent executes the command; the model does not.",
+    parameters: {
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          description: "A focused Bash command to run in /workspace/site"
+        }
+      },
+      required: ["command"],
+      additionalProperties: false
+    }
+  }
+} as const;
+const VIBE_SYSTEM_PROMPT = [
+  "You are part of a teaching demo about coding agents.",
+  "Build the static webpage requested by the user in /workspace/site.",
+  "You have one tool named bash. You request commands; the agent runs them in a temporary Fly.io sandbox and returns the result.",
+  "Use bash to inspect the folder, write the files, and check your work. Create index.html. Put CSS and JavaScript in separate files when useful.",
+  "You may use curl or wget when the user supplies an image URL. Do not start a web server, install packages, or write outside the current folder.",
+  "Keep each command focused so a learner can follow the file reads and writes. Finish with a short summary after the page works."
+].join(" ");
+const VIBE_MAX_MODEL_CALLS = 6;
+const VIBE_MAX_TOOL_CALLS = 5;
 
 type MessagePart = { type: "text"; text: string };
 type TutorialMessage = { role: "user" | "assistant"; content: MessagePart[] };
@@ -414,6 +444,20 @@ function toolArguments(call: { name: string; argumentsText: string }): { query: 
   return { query: query.slice(0, 400) };
 }
 
+function bashArguments(call: { name: string; argumentsText: string }): { command: string } {
+  if (call.name !== "bash") throw new Error(`The model requested an unknown tool: ${call.name || "unnamed"}`);
+  let args: Record<string, unknown> | undefined;
+  try {
+    args = record(JSON.parse(call.argumentsText));
+  } catch {
+    throw new Error("The model returned invalid bash arguments.");
+  }
+  const command = typeof args?.command === "string" ? args.command.trim() : "";
+  if (!command) throw new Error("The model returned an empty bash command.");
+  if (command.length > 12_000) throw new Error("The requested bash command is too large for this demo.");
+  return { command };
+}
+
 function tutorialTrace(res: ServerResponse, event: Record<string, unknown>): void {
   streamEvent(res, { at: Date.now(), ...event });
 }
@@ -599,11 +643,179 @@ async function handleToolDemo(req: IncomingMessage, res: ServerResponse, config:
   }
 }
 
+function vibeRequest(model: string, messages: Array<Record<string, unknown>>, toolsEnabled: boolean, first: boolean) {
+  return {
+    model,
+    messages,
+    stream: false,
+    max_completion_tokens: 2048,
+    reasoning: { effort: "minimal", exclude: true },
+    ...(toolsEnabled
+      ? {
+          tools: [BASH_TOOL],
+          tool_choice: first ? "required" : "auto",
+          parallel_tool_calls: false
+        }
+      : {})
+  };
+}
+
+async function handleVibeDemo(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: AppConfig,
+  manager: TutorialVibeManager,
+  userId: string
+): Promise<void> {
+  let input: Record<string, unknown> | undefined;
+  try {
+    input = record(await readJsonBody(req));
+  } catch (error) {
+    sendJson(res, { error: error instanceof Error ? error.message : String(error) }, 400);
+    return;
+  }
+  const prompt = typeof input?.prompt === "string" ? input.prompt.trim().slice(0, 800) : "";
+  if (!prompt) return sendJson(res, { error: "A webpage request is required." }, 400);
+  if (!config.openRouterApiKey) return sendJson(res, { error: "OpenRouter is not configured." }, 503);
+
+  let run: Awaited<ReturnType<TutorialVibeManager["begin"]>>;
+  try {
+    run = await manager.begin(userId);
+  } catch (error) {
+    return sendJson(res, { error: error instanceof Error ? error.message : String(error) }, Number(record(error)?.status) || 500);
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "application/x-ndjson; charset=utf-8",
+    "Cache-Control": "no-store",
+    Connection: "keep-alive",
+    "X-Tutorial-Vibe-API-Version": "1"
+  });
+  const abortController = new AbortController();
+  req.on("aborted", () => abortController.abort());
+  res.on("close", () => {
+    if (!res.writableEnded) abortController.abort();
+  });
+
+  const model = process.env.TECHNICALLY_SPEAKING_VIBE_MODEL?.trim() || TOOL_DEMO_MODEL;
+  const messages: Array<Record<string, unknown>> = [
+    { role: "system", content: VIBE_SYSTEM_PROMPT },
+    { role: "user", content: prompt }
+  ];
+  let modelCalls = 0;
+  let toolCalls = 0;
+
+  try {
+    tutorialTrace(res, { type: "user_message", prompt });
+    for (let turn = 1; turn <= VIBE_MAX_MODEL_CALLS; turn += 1) {
+      const toolsEnabled = toolCalls < VIBE_MAX_TOOL_CALLS && turn < VIBE_MAX_MODEL_CALLS;
+      const requestBody = vibeRequest(model, messages, toolsEnabled, turn === 1);
+      tutorialTrace(res, {
+        type: "agent_model_request",
+        turn,
+        model,
+        tools: toolsEnabled ? [BASH_TOOL] : [],
+        messages: structuredClone(messages),
+        request: structuredClone(requestBody)
+      });
+      const response = await callToolDemoModel(req, config, requestBody, abortController.signal);
+      modelCalls += 1;
+      const call = toolCallFromMessage(response.message);
+      if (!call) {
+        const answer = modelText(response.message) || "The model stopped without a summary.";
+        tutorialTrace(res, {
+          type: "model_response",
+          turn,
+          text: answer,
+          finishReason: response.finishReason,
+          usage: response.usage,
+          response: response.rawResponse
+        });
+        tutorialTrace(res, { type: "agent_user_response", text: answer, generatedBy: "model" });
+        const files = await run.sandbox.listFiles();
+        tutorialTrace(res, {
+          type: "files_snapshot",
+          files,
+          previewReady: files.some((file) => file.path === "index.html")
+        });
+        tutorialTrace(res, { type: "done", modelCalls, toolCalls, expiresInMinutes: config.fly.demoIdleMinutes });
+        res.end();
+        return;
+      }
+      if (!toolsEnabled) throw new Error("The model requested another command after the demo tool limit.");
+      const args = bashArguments(call);
+      toolCalls += 1;
+      tutorialTrace(res, {
+        type: "model_tool_call",
+        turn,
+        toolCallId: call.id,
+        name: call.name,
+        arguments: args,
+        response: response.rawResponse
+      });
+      tutorialTrace(res, { type: "agent_tool_start", toolCallId: call.id, name: call.name, arguments: args });
+      const result = await run.sandbox.exec(args.command);
+      const files = await run.sandbox.listFiles();
+      tutorialTrace(res, {
+        type: "agent_tool_result",
+        toolCallId: call.id,
+        name: call.name,
+        text: result.output || "(no output)",
+        exitCode: result.exitCode,
+        files
+      });
+      messages.push(
+        {
+          role: "assistant",
+          content: typeof response.message.content === "string" ? response.message.content : null,
+          tool_calls: [
+            {
+              id: call.id,
+              type: "function",
+              function: { name: call.name, arguments: JSON.stringify(args) }
+            }
+          ]
+        },
+        {
+          role: "tool",
+          tool_call_id: call.id,
+          name: call.name,
+          content: `Exit code: ${result.exitCode ?? "unknown"}\n${result.output || "(no output)"}`
+        }
+      );
+    }
+    throw new Error("The website demo reached its model-call limit.");
+  } catch (error) {
+    if (!res.writableEnded) {
+      tutorialTrace(res, { type: "error", error: error instanceof Error ? error.message : String(error) });
+      res.end();
+    }
+  } finally {
+    run.release();
+  }
+}
+
+function contentType(path: string): string {
+  const extension = path.toLowerCase().split(".").pop();
+  if (extension === "html") return "text/html; charset=utf-8";
+  if (extension === "css") return "text/css; charset=utf-8";
+  if (extension === "js" || extension === "mjs") return "text/javascript; charset=utf-8";
+  if (extension === "json") return "application/json; charset=utf-8";
+  if (extension === "svg") return "image/svg+xml";
+  if (extension === "png") return "image/png";
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "gif") return "image/gif";
+  if (extension === "webp") return "image/webp";
+  return "text/plain; charset=utf-8";
+}
+
 export async function handleTechnicallySpeakingApi(
   pathname: string,
   req: IncomingMessage,
   res: ServerResponse,
-  config: AppConfig
+  config: AppConfig,
+  vibeManager?: TutorialVibeManager,
+  userId?: string
 ): Promise<void> {
   if (pathname === "/technically-speaking/api/config" && req.method === "GET") {
     sendJson(res, {
@@ -621,6 +833,41 @@ export async function handleTechnicallySpeakingApi(
   }
   if (pathname === "/technically-speaking/api/tool-demo" && req.method === "POST") {
     await handleToolDemo(req, res, config);
+    return;
+  }
+  if (pathname === "/technically-speaking/api/vibe-demo" && req.method === "POST" && vibeManager && userId) {
+    await handleVibeDemo(req, res, config, vibeManager, userId);
+    return;
+  }
+  if (pathname === "/technically-speaking/api/vibe-demo" && req.method === "DELETE" && vibeManager && userId) {
+    await vibeManager.reset(userId);
+    sendJson(res, { ok: true });
+    return;
+  }
+  if (pathname === "/technically-speaking/api/vibe-files" && req.method === "GET" && vibeManager && userId) {
+    sendJson(res, { files: await vibeManager.existing(userId).listFiles() });
+    return;
+  }
+  if (pathname === "/technically-speaking/api/vibe-file" && req.method === "GET" && vibeManager && userId) {
+    const url = new URL(req.url ?? "", "http://tutorial");
+    const path = url.searchParams.get("path") ?? "";
+    const data = await vibeManager.existing(userId).readFile(path);
+    res.writeHead(200, { "Content-Type": contentType(path), "Cache-Control": "no-store" });
+    res.end(data);
+    return;
+  }
+  const preview = /^\/technically-speaking\/api\/vibe-preview\/(.+)$/.exec(pathname);
+  if (preview && req.method === "GET" && vibeManager && userId) {
+    const path = decodeURIComponent(preview[1]);
+    const data = await vibeManager.existing(userId).readFile(path);
+    res.writeHead(200, {
+      "Content-Type": contentType(path),
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'",
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "no-referrer"
+    });
+    res.end(data);
     return;
   }
   sendJson(res, { error: "Not found" }, 404);

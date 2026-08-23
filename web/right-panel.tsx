@@ -5,15 +5,17 @@ import {
   Plus,
   RefreshCw,
   Sparkles,
+  Braces,
   Trash2,
   X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PreviewService, SkillSummary } from "../src/types.js";
+import type { PreviewService, SkillSummary, ToolSummary } from "../src/types.js";
 import { SkillsPane } from "./skills-pane.js";
+import { ToolsPane } from "./tools-pane.js";
 import "./right-panel.css";
 
-type RightPanelTabType = "preview" | "skills";
+type RightPanelTabType = "preview" | "skills" | "tools";
 
 type RightPanelTab = {
   id: string;
@@ -23,7 +25,8 @@ type RightPanelTab = {
 
 const TAB_TITLES: Record<RightPanelTabType, string> = {
   preview: "Preview",
-  skills: "Skills"
+  skills: "Skills",
+  tools: "Tools"
 };
 
 const initialRightTabs: RightPanelTab[] = [
@@ -33,15 +36,19 @@ const initialRightTabs: RightPanelTab[] = [
 export function RightPanel({
   previews,
   skills,
+  tools,
   workspaceUrl,
   focusSkill,
+  focusTools,
   onCollapse,
   onRemovePreview
 }: {
   previews: PreviewService[];
   skills: SkillSummary[];
+  tools: ToolSummary[];
   workspaceUrl: (path: string) => string;
   focusSkill?: { name: string; nonce: number };
+  focusTools?: boolean;
   onCollapse: () => void;
   onRemovePreview: (preview: PreviewService) => Promise<void>;
 }) {
@@ -52,6 +59,7 @@ export function RightPanel({
   const [newTabMenuOpen, setNewTabMenuOpen] = useState(false);
   const previousPreviewIds = useRef(new Set<string>());
   const handledFocusNonce = useRef<number | undefined>(undefined);
+  const handledToolsFocus = useRef(false);
 
   const selectedPreview = useMemo(
     () => previews.find((preview) => preview.id === selectedPreviewId) ?? previews[0],
@@ -93,6 +101,12 @@ export function RightPanel({
     openTab("skills");
   }, [focusSkill, tabs]);
 
+  useEffect(() => {
+    if (!focusTools || handledToolsFocus.current) return;
+    handledToolsFocus.current = true;
+    openTab("tools");
+  }, [focusTools]);
+
   function openTab(type: RightPanelTabType) {
     const existing = tabs.find((tab) => tab.type === type);
     if (existing) {
@@ -125,8 +139,8 @@ export function RightPanel({
       <div className="right-tabbar">
         <div className="right-tabs" role="tablist" aria-label="Right panel tabs">
           {tabs.map((tab) => {
-            const TabIcon = tab.type === "skills" ? Sparkles : Monitor;
-            const count = tab.type === "skills" ? skills.length : previews.length;
+            const TabIcon = tab.type === "skills" ? Sparkles : tab.type === "tools" ? Braces : Monitor;
+            const count = tab.type === "skills" ? skills.length : tab.type === "tools" ? tools.length : previews.length;
             return (
               <div className={tab.id === activeTab?.id ? "right-tab active" : "right-tab"} key={tab.id}>
                 <button
@@ -166,6 +180,10 @@ export function RightPanel({
                 <Sparkles size={14} />
                 <span>Skills</span>
               </button>
+              <button type="button" onClick={() => openTab("tools")}>
+                <Braces size={14} />
+                <span>Tools</span>
+              </button>
             </div>
           )}
           <button type="button" className="panel-icon-button" onClick={onCollapse} title="Collapse panel">
@@ -177,6 +195,8 @@ export function RightPanel({
       <div className="right-panel-body">
         {activeTab?.type === "skills" ? (
           <SkillsPane skills={skills} workspaceUrl={workspaceUrl} focusSkillName={focusSkill?.name} />
+        ) : activeTab?.type === "tools" ? (
+          <ToolsPane tools={tools} />
         ) : (
           <PreviewPane
             previews={previews}

@@ -8,6 +8,66 @@ import { join } from "node:path";
 const root = mkdtempSync(join(tmpdir(), "agentmom-technically-speaking-"));
 const receivedRequests: Array<Record<string, any>> = [];
 const searchRequests: string[] = [];
+const sandboxCommands: string[] = [];
+const sandboxFiles = new Map<string, Buffer>();
+
+const sandbox = createServer(async (req, res) => {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  if (url.pathname === "/health") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, root: "/workspace" }));
+    return;
+  }
+  if (url.pathname === "/reset" && req.method === "POST") {
+    sandboxFiles.clear();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end('{"ok":true}');
+    return;
+  }
+  if (url.pathname === "/file" && req.method === "POST") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end('{"ok":true}');
+    return;
+  }
+  if (url.pathname === "/files") {
+    const files = [...sandboxFiles.entries()].map(([path, data]) => ({ path, size: data.byteLength }));
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ files }));
+    return;
+  }
+  if (url.pathname === "/file" && req.method === "GET") {
+    const path = url.searchParams.get("path")?.replace("/workspace/site/", "") ?? "";
+    const data = sandboxFiles.get(path);
+    if (!data) {
+      res.writeHead(404);
+      res.end("not found");
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/octet-stream" });
+    res.end(data);
+    return;
+  }
+  if (url.pathname === "/exec" && req.method === "POST") {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    sandboxCommands.push(body.command);
+    if (sandboxCommands.length === 1) {
+      sandboxFiles.set("index.html", Buffer.from('<!doctype html><link rel="stylesheet" href="styles.css"><h1>Staten Island</h1>'));
+    } else {
+      sandboxFiles.set("styles.css", Buffer.from("body { font-family: sans-serif; }"));
+    }
+    res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+    res.end(`${JSON.stringify({ o: Buffer.from("wrote files\n").toString("base64") })}\n${JSON.stringify({ x: 0 })}\n`);
+    return;
+  }
+  res.writeHead(404);
+  res.end("not found");
+});
+
+await new Promise<void>((resolve) => sandbox.listen(0, "127.0.0.1", resolve));
+const sandboxAddress = sandbox.address();
+assert(sandboxAddress && typeof sandboxAddress === "object");
 
 const upstream = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
@@ -46,8 +106,31 @@ const upstream = createServer(async (req, res) => {
     const userMessage = request.messages.find((message: Record<string, unknown>) => message.role === "user");
     const emptyResponse = typeof userMessage?.content === "string" && userMessage.content.includes("EMPTY_RESPONSE_TEST");
     const toolMessage = request.messages.find((message: Record<string, unknown>) => message.role === "tool");
+    const offeredTool = request.tools?.[0]?.function?.name;
+    const bashResults = request.messages.filter((message: Record<string, unknown>) => message.role === "tool" && message.name === "bash");
     const message = emptyResponse
       ? { role: "assistant", content: "" }
+      : offeredTool === "bash" && bashResults.length < 2
+        ? {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: `bash-${bashResults.length + 1}`,
+                type: "function",
+                function: {
+                  name: "bash",
+                  arguments: JSON.stringify({
+                    command: bashResults.length === 0
+                      ? "cat > index.html <<'EOF'\n<h1>Staten Island</h1>\nEOF"
+                      : "printf '%s' 'body { font-family: sans-serif; }' > styles.css"
+                  })
+                }
+              }
+            ]
+          }
+      : offeredTool === "bash" || bashResults.length > 0
+        ? { role: "assistant", content: "Built the Staten Island page and checked its files." }
       : request.tools
       ? {
           role: "assistant",
@@ -121,6 +204,8 @@ const server = spawn(process.execPath, ["node_modules/tsx/dist/cli.mjs", "src/se
     AGENTMOM_PROJECTS_DIR: join(root, "projects"),
     AGENTMOM_TELEGRAM_BOT_TOKEN: "smoke-telegram-token",
     AGENTMOM_TELEGRAM_DISABLED: "1",
+    AGENTMOM_TUTORIAL_SANDBOX_URL: `http://127.0.0.1:${sandboxAddress.port}`,
+    AGENTMOM_TUTORIAL_SANDBOX_TOKEN: "smoke-sandbox-token",
     BRAVE_API_KEY: "smoke-brave-key",
     BRAVE_LLM_CONTEXT_URL: `http://127.0.0.1:${upstreamAddress.port}/search`,
     OPENROUTER_API_KEY: "smoke-openrouter-key",
@@ -168,6 +253,14 @@ try {
   assert.equal(receivedRequests.length, 0, "anonymous tool demo reached OpenRouter");
   assert.equal(searchRequests.length, 0, "anonymous tool demo reached Brave");
 
+  const anonymousVibeDemo = await fetch(`${baseUrl}/technically-speaking/api/vibe-demo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: "Make a page" })
+  });
+  assert.equal(anonymousVibeDemo.status, 401);
+  assert.equal(sandboxCommands.length, 0, "anonymous website demo reached the sandbox");
+
   const login = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -190,6 +283,8 @@ try {
   assert.match(pageHtml, /Who actually searches the web/);
   assert.match(pageHtml, /tool-results-dialog/);
   assert.match(pageHtml, /tool-wire-dialog/);
+  assert.match(pageHtml, /Give the agent Bash/);
+  assert.match(pageHtml, /vibe-preview-frame/);
 
   const config = await fetch(`${baseUrl}/technically-speaking/api/config`, { headers });
   assert.equal(config.status, 200);
@@ -357,9 +452,49 @@ try {
   assert.equal(emptyEvents.find((event) => event.type === "model_no_answer").finishReason, "length");
   assert.match(emptyEvents.find((event) => event.type === "agent_user_response").text, /Enable web_search/);
 
+  const vibe = await fetch(`${baseUrl}/technically-speaking/api/vibe-demo`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: "Make a one-page website about Staten Island." })
+  });
+  assert.equal(vibe.status, 200);
+  assert.equal(vibe.headers.get("x-tutorial-vibe-api-version"), "1");
+  const vibeEvents = (await vibe.text()).trim().split("\n").map((line) => JSON.parse(line));
+  assert.equal(vibeEvents[0].type, "user_message");
+  assert.equal(vibeEvents.at(-1).type, "done");
+  assert.equal(vibeEvents.filter((event) => event.type === "model_tool_call").length, 2);
+  assert.equal(vibeEvents.filter((event) => event.type === "agent_tool_result").length, 2);
+  assert.match(vibeEvents.find((event) => event.type === "model_tool_call").arguments.command, /index\.html/);
+  assert.equal(sandboxCommands.length, 2);
+  const vibeRequests = receivedRequests.filter((request) => request.tools?.[0]?.function?.name === "bash");
+  assert.equal(vibeRequests[0].tool_choice, "required");
+  assert.equal(vibeRequests[0].parallel_tool_calls, false);
+  assert.equal(vibeRequests[1].tool_choice, "auto");
+
+  const files = await fetch(`${baseUrl}/technically-speaking/api/vibe-files`, { headers });
+  assert.equal(files.status, 200);
+  assert.deepEqual((await files.json()).files.map((file: { path: string }) => file.path).sort(), ["index.html", "styles.css"]);
+
+  const file = await fetch(`${baseUrl}/technically-speaking/api/vibe-file?path=index.html`, { headers });
+  assert.equal(file.status, 200);
+  assert.match(await file.text(), /Staten Island/);
+
+  const preview = await fetch(`${baseUrl}/technically-speaking/api/vibe-preview/index.html`, { headers });
+  assert.equal(preview.status, 200);
+  assert.match(preview.headers.get("content-security-policy") ?? "", /connect-src 'none'/);
+  assert.match(await preview.text(), /Staten Island/);
+
+  const traversal = await fetch(`${baseUrl}/technically-speaking/api/vibe-file?path=../secret`, { headers });
+  assert.equal(traversal.status, 400);
+
+  const resetVibe = await fetch(`${baseUrl}/technically-speaking/api/vibe-demo`, { method: "DELETE", headers });
+  assert.equal(resetVibe.status, 200);
+  assert.equal(sandboxFiles.size, 0);
+
   console.log("technically-speaking smoke ok");
 } finally {
   server.kill("SIGTERM");
   await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  await new Promise<void>((resolve) => sandbox.close(() => resolve()));
   rmSync(root, { recursive: true, force: true });
 }

@@ -336,6 +336,83 @@
             <pre><code id="tool-raw-json">[]</code></pre>
           </details>
         </section>
+
+        <section class="vibe-demo" aria-labelledby="vibe-heading">
+          <header class="vibe-heading">
+            <div>
+              <p class="eyebrow">One more tool</p>
+              <h3 id="vibe-heading">Give the agent Bash. Now it can build.</h3>
+              <p>The model requests commands. The agent runs them in a short-lived Fly sandbox, then returns the output.</p>
+            </div>
+            <span id="vibe-status" class="status idle">Ready</span>
+          </header>
+
+          <form id="vibe-form" class="vibe-form">
+            <label for="vibe-prompt">Ask the agent to make a webpage</label>
+            <div class="vibe-composer">
+              <textarea id="vibe-prompt" rows="3" spellcheck="true">Make a polished one-page website about Staten Island. Include a hero, three local highlights, and a short visitor guide.</textarea>
+              <div class="vibe-actions">
+                <button id="run-vibe" class="button primary" type="submit">Build webpage</button>
+                <button id="reset-vibe" class="button secondary" type="button">Delete sandbox</button>
+              </div>
+            </div>
+            <small class="vibe-expiry">Temporary machine and files deleted after 10 minutes without use.</small>
+          </form>
+
+          <div class="vibe-loop-head">
+            <span>User</span>
+            <span>Agent</span>
+            <span>Model</span>
+            <span>Fly sandbox</span>
+          </div>
+          <ol id="vibe-events" class="vibe-events" aria-live="polite">
+            <li class="vibe-empty">Run the demo to watch the model request Bash commands.</li>
+          </ol>
+
+          <div class="vibe-workbench">
+            <section class="vibe-files" aria-labelledby="vibe-files-heading">
+              <header>
+                <div>
+                  <p class="eyebrow">Sandbox files</p>
+                  <h4 id="vibe-files-heading">/workspace/site</h4>
+                </div>
+                <span id="vibe-file-count" class="count">0 files</span>
+              </header>
+              <div class="vibe-file-body">
+                <nav id="vibe-file-list" class="vibe-file-list" aria-label="Generated files">
+                  <span class="vibe-empty">No files yet.</span>
+                </nav>
+                <pre class="vibe-code"><code id="vibe-file-content">Select a file to read it.</code></pre>
+              </div>
+            </section>
+
+            <section class="vibe-preview" aria-labelledby="vibe-preview-heading">
+              <header>
+                <div>
+                  <p class="eyebrow">Rendered result</p>
+                  <h4 id="vibe-preview-heading">index.html</h4>
+                </div>
+                <button id="refresh-vibe-preview" class="button secondary" type="button" disabled>Refresh</button>
+              </header>
+              <div id="vibe-preview-empty" class="vibe-preview-empty">The generated index.html will appear here.</div>
+              <iframe
+                id="vibe-preview-frame"
+                title="Generated webpage preview"
+                sandbox="allow-scripts"
+                hidden
+              ></iframe>
+            </section>
+          </div>
+
+          <footer class="vibe-handoff">
+            <div>
+              <p class="eyebrow">The real thing</p>
+              <strong>Agent Mom uses the same loop with more tools.</strong>
+            </div>
+            <a class="button secondary" href="/?panel=tools">See Agent Mom’s tools</a>
+          </footer>
+          <p id="vibe-error" class="request-error" role="alert" hidden></p>
+        </section>
         <p id="tools-error" class="request-error" role="alert" hidden></p>
       </section>
     </main>

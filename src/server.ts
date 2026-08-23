@@ -31,6 +31,7 @@ import { startSandboxReaper } from "./sandbox-reaper.js";
 import { ensureWorkspaceProjectPath, workspaceApiPath, workspacePreviewPath } from "./server-paths.js";
 import { createSkill, deleteSkill, listSkillFiles, readSkillFile, writeSkillFile } from "./skills.js";
 import { handleTechnicallySpeakingApi } from "./technically-speaking.js";
+import { TutorialVibeManager } from "./tutorial-vibe.js";
 import { TelegramChannel } from "./telegram-channel.js";
 import {
   MAX_MESSAGE_ATTACHMENT_BYTES,
@@ -45,6 +46,7 @@ const config = loadConfig({ requireServiceSecrets: true });
 const catalog = new CatalogStore(config);
 const deployments = new DeploymentManager(config);
 const runtimes = new WorkspaceRuntimeManager(config, deployments);
+const vibeManager = new TutorialVibeManager(config);
 const isProduction = process.env.NODE_ENV === "production";
 let telegram: TelegramChannel | undefined;
 
@@ -127,7 +129,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       if (tutorialApi) {
-        return await handleTechnicallySpeakingApi(url.pathname, req, res, config);
+        return await handleTechnicallySpeakingApi(url.pathname, req, res, config, vibeManager, currentUser(req)!.id);
       }
     }
 
@@ -590,6 +592,7 @@ function cleanAttachmentText(value: unknown, fallback: string): string {
 }
 
 async function shutdown(): Promise<void> {
+  await vibeManager.dispose();
   await telegram?.stop();
   runtimes.dispose();
   await vite?.close();
