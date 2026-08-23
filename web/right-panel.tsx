@@ -2,6 +2,8 @@ import {
   Braces,
   ExternalLink,
   ListTree,
+  Maximize2,
+  Minimize2,
   Monitor,
   PanelRightClose,
   Plus,
@@ -12,6 +14,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PreviewService, SkillSummary, ToolSummary, UiEvent } from "../src/types.js";
+import { buildAgentLoop } from "./agent-loop.js";
 import { SkillsPane } from "./skills-pane.js";
 import { TimelinePane } from "./timeline-pane.js";
 import { ToolsPane } from "./tools-pane.js";
@@ -29,7 +32,7 @@ const TAB_TITLES: Record<RightPanelTabType, string> = {
   preview: "Preview",
   skills: "Skills",
   tools: "Tools",
-  timeline: "Timeline"
+  timeline: "Agent loop"
 };
 
 const initialRightTabs: RightPanelTab[] = [
@@ -62,6 +65,7 @@ export function RightPanel({
   const [tabs, setTabs] = useState<RightPanelTab[]>(initialRightTabs);
   const [activeTabId, setActiveTabId] = useState(initialRightTabs[0].id);
   const [newTabMenuOpen, setNewTabMenuOpen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const previousPreviewIds = useRef(new Set<string>());
   const handledFocusNonce = useRef<number | undefined>(undefined);
 
@@ -70,9 +74,20 @@ export function RightPanel({
     [selectedPreviewId, previews]
   );
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
-  const timelineEventCount = events.filter(
-    (event) => !(event.type === "tool" && event.title.endsWith(" update"))
-  ).length;
+  const toolCallCount = useMemo(() => buildAgentLoop(events).length, [events]);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFullscreen(false);
+    };
+    document.body.classList.add("right-panel-fullscreen-open");
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.classList.remove("right-panel-fullscreen-open");
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [fullscreen]);
 
   useEffect(() => {
     if (previews.length === 0) {
@@ -136,12 +151,12 @@ export function RightPanel({
   }
 
   return (
-    <aside className="right-panel">
+    <aside className={fullscreen ? "right-panel fullscreen" : "right-panel"}>
       <div className="right-tabbar">
         <div className="right-tabs" role="tablist" aria-label="Right panel tabs">
           {tabs.map((tab) => {
             const TabIcon = tab.type === "skills" ? Sparkles : tab.type === "tools" ? Braces : tab.type === "timeline" ? ListTree : Monitor;
-            const count = tab.type === "skills" ? skills.length : tab.type === "tools" ? tools.length : tab.type === "timeline" ? timelineEventCount : previews.length;
+            const count = tab.type === "skills" ? skills.length : tab.type === "tools" ? tools.length : tab.type === "timeline" ? toolCallCount : previews.length;
             return (
               <div className={tab.id === activeTab?.id ? "right-tab active" : "right-tab"} key={tab.id}>
                 <button
@@ -187,10 +202,19 @@ export function RightPanel({
               </button>
               <button type="button" onClick={() => openTab("timeline")}>
                 <ListTree size={14} />
-                <span>Timeline</span>
+                <span>Agent loop</span>
               </button>
             </div>
           )}
+          <button
+            type="button"
+            className="panel-icon-button"
+            onClick={() => setFullscreen((value) => !value)}
+            title={fullscreen ? "Exit full screen" : "Full screen"}
+            aria-pressed={fullscreen}
+          >
+            {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
           <button type="button" className="panel-icon-button" onClick={onCollapse} title="Collapse panel">
             <PanelRightClose size={16} />
           </button>

@@ -1,82 +1,87 @@
-import { Bot, Braces, CircleAlert, Clock3, Server, Sparkles } from "lucide-react";
+import { ArrowDown, ArrowRight, Bot, Check, CircleAlert, Clock3, Cpu } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import type { UiEvent } from "../src/types.js";
+import { buildAgentLoop, prettyDetail, requestSummary, resultSummary } from "./agent-loop.js";
 
-const EVENT_LABELS: Record<string, string> = {
-  agent: "Agent",
-  model: "Model",
-  tool: "Agent",
-  runtime: "Runtime",
-  preview: "Preview",
-  compaction: "Context",
-  error: "Error",
-  cancel: "Agent"
-};
-
-function eventIcon(event: UiEvent) {
-  if (event.isError || event.type === "error") return <CircleAlert size={15} />;
-  if (event.type === "model") return <Bot size={15} />;
-  if (event.type === "tool") return <Braces size={15} />;
-  if (event.type === "runtime") return <Server size={15} />;
-  return <Sparkles size={15} />;
-}
-
-function prettyDetail(detail: string): string {
-  try {
-    return JSON.stringify(JSON.parse(detail), null, 2);
-  } catch {
-    return detail;
-  }
+function shortCallId(id: string): string {
+  return id.length > 18 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id;
 }
 
 export function TimelinePane({ events, isRunning }: { events: UiEvent[]; isRunning: boolean }) {
-  const timeline = useMemo(
-    () => events.filter((event) => !(event.type === "tool" && event.title.endsWith(" update"))).reverse(),
-    [events]
-  );
+  const exchanges = useMemo(() => buildAgentLoop(events), [events]);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [timeline.length]);
+  }, [exchanges.length]);
 
   return (
     <section className="timeline-pane">
       <header className="inspector-heading">
         <div>
           <span className="pane-kicker">The agent loop</span>
-          <h2>What happens in the background</h2>
+          <h2>Model ↔ Agent Mom</h2>
         </div>
-        <span className="inspector-count">{timeline.length}</span>
+        <span className="inspector-count">{exchanges.length}</span>
       </header>
-      <p className="inspector-note">The model requests tools. Agent Mom runs them and returns each result.</p>
-      {timeline.length === 0 ? (
-        <div className="timeline-empty"><Clock3 size={22} /><span>Activity will appear here.</span></div>
+      <p className="inspector-note">
+        Each row is a real tool call: the model sends a structured request, Agent Mom runs it, then sends the result back.
+      </p>
+      {exchanges.length === 0 ? (
+        <div className="timeline-empty">
+          <Clock3 size={22} />
+          <span>Tool calls will appear here.</span>
+        </div>
       ) : (
-        <ol className="event-timeline">
-          {timeline.map((event) => (
-            <li className={event.isError ? "event-row error" : "event-row"} key={event.id}>
-              <span className={`event-icon ${event.type}`}>{eventIcon(event)}</span>
-              <article>
-                <header>
-                  <span>{EVENT_LABELS[event.type] ?? event.type}</span>
-                  <time>{new Date(event.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}</time>
-                </header>
-                <strong>{event.title}</strong>
-                {event.detail && (
-                  <details>
-                    <summary>View details</summary>
-                    <pre><code>{prettyDetail(event.detail)}</code></pre>
-                  </details>
-                )}
-              </article>
+        <ol className="agent-loop-list">
+          {exchanges.map((exchange, index) => (
+            <li className={exchange.isError ? "agent-loop-step error" : "agent-loop-step"} key={exchange.id}>
+              <header className="agent-loop-step-head">
+                <span>Tool call {index + 1}</span>
+                <code>{shortCallId(exchange.id)}</code>
+              </header>
+              <div className="agent-loop-lanes" aria-label={`${exchange.toolName} tool exchange`}>
+                <article className="loop-card model-request">
+                  <header><Bot size={15} /><span>Model → Agent Mom</span></header>
+                  <strong>Requests <code>{exchange.toolName}</code></strong>
+                  <p>{requestSummary(exchange)}</p>
+                  {exchange.requestDetail && (
+                    <details>
+                      <summary>View exact request</summary>
+                      <pre><code>{prettyDetail(exchange.requestDetail)}</code></pre>
+                    </details>
+                  )}
+                </article>
+                <span className="loop-forward" aria-hidden="true"><ArrowRight size={18} /></span>
+                <span className="loop-forward-mobile" aria-hidden="true"><ArrowDown size={18} /></span>
+                <article className="loop-card agent-execution">
+                  <header><Cpu size={15} /><span>Agent Mom</span></header>
+                  <strong>{exchange.startedAt ? `Runs ${exchange.toolName}` : "Waiting for Agent Mom"}</strong>
+                  {exchange.argumentsDetail && (
+                    <details>
+                      <summary>View execution input</summary>
+                      <pre><code>{prettyDetail(exchange.argumentsDetail)}</code></pre>
+                    </details>
+                  )}
+                </article>
+              </div>
+              <div className={exchange.isError ? "loop-return error" : "loop-return"}>
+                {exchange.isError ? <CircleAlert size={15} /> : <Check size={15} />}
+                <div>
+                  <strong>{exchange.isError ? "Agent Mom → Model: error" : "Agent Mom → Model: result"}</strong>
+                  <p>{resultSummary(exchange)}</p>
+                  {exchange.resultDetail && (
+                    <details>
+                      <summary>View exact result</summary>
+                      <pre><code>{prettyDetail(exchange.resultDetail)}</code></pre>
+                    </details>
+                  )}
+                </div>
+              </div>
             </li>
           ))}
-          {isRunning && (
-            <li className="event-row live">
-              <span className="event-icon agent"><Sparkles size={15} /></span>
-              <article><strong>Working…</strong></article>
-            </li>
+          {isRunning && exchanges.at(-1)?.finishedAt && (
+            <li className="loop-waiting">The model is deciding what to do next…</li>
           )}
         </ol>
       )}

@@ -379,20 +379,23 @@ export class PiBridge {
           this.addEvent(
             "model",
             `Model requested ${part.name}`,
-            stringifyCompact({ id: part.id, name: part.name, arguments: part.arguments })
+            stringifyCompact({ id: part.id, name: part.name, arguments: part.arguments }),
+            false,
+            part.id
           );
         }
       }
     } else if (event.type === "tool_execution_start") {
-      this.addEvent("tool", `${event.toolName} started`, stringifyCompact(event.args));
+      this.addEvent("tool", `${event.toolName} started`, stringifyCompact(event.args), false, event.toolCallId);
     } else if (event.type === "tool_execution_update") {
-      this.addEvent("tool", `${event.toolName} update`, stringifyCompact(event.partialResult));
+      return;
     } else if (event.type === "tool_execution_end") {
       this.addEvent(
         "tool",
         `${event.toolName} ${event.isError ? "failed" : "finished"}`,
         stringifyCompact(event.result),
-        event.isError
+        event.isError,
+        event.toolCallId
       );
     } else if (event.type === "compaction_start") {
       this.addEvent("compaction", "Compaction started", event.reason);
@@ -833,13 +836,14 @@ export class PiBridge {
     throw new Error("Guest preview fetch is only available with the fly executor");
   }
 
-  private addEvent(type: string, title: string, detail?: string, isError = false): void {
+  private addEvent(type: string, title: string, detail?: string, isError = false, toolCallId?: string): void {
     this.events = [
       {
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
         type,
         title,
         detail,
+        toolCallId,
         isError,
         createdAt: new Date().toISOString()
       },

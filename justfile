@@ -30,6 +30,9 @@ smoke-session-switch:
 smoke-skills:
     nix develop -c npm run smoke:skills
 
+smoke-agent-loop:
+    nix develop -c npm run smoke:agent-loop
+
 smoke-technically-speaking:
     nix develop -c npm run smoke:technically-speaking
 

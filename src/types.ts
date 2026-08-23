@@ -89,6 +89,7 @@ export type UiEvent = {
   type: string;
   title: string;
   detail?: string;
+  toolCallId?: string;
   isError?: boolean;
   createdAt: string;
 };
