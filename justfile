@@ -24,6 +24,9 @@ smoke-cli:
 smoke-web-search:
     nix develop -c npm run smoke:web-search
 
+smoke-openrouter-model:
+    nix develop -c npm run smoke:openrouter-model
+
 smoke-session-switch:
     nix develop -c npm run smoke:session-switch
 

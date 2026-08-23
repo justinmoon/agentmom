@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
-import type { AssistantMessage, ImageContent, TextContent, UserMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent, Model, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
   createBashToolDefinition,
@@ -40,6 +40,12 @@ import { FlySandbox } from "./fly-machines.js";
 import { allocatePort } from "./process-utils.js";
 import type { AppState, ChatMessage, MessageAttachment, SessionSummary, SkillSummary, ToolSummary, UiEvent } from "./types.js";
 import { createWebSearchTool } from "./web-search.js";
+import {
+  confirmFreeOxAlpha,
+  createOxAlphaModel,
+  FALLBACK_MODEL,
+  OX_ALPHA_MODEL
+} from "./openrouter-model.js";
 
 type PiMessage = UserMessage | AssistantMessage;
 type StateListener = (state: AppState) => void;
@@ -69,6 +75,10 @@ export class PiBridge {
   private skillWatchers: FSWatcher[] = [];
   private skillReloadTimer?: NodeJS.Timeout;
   private toolSummaries: ToolSummary[] = [];
+  private fallbackModel?: Model<any>;
+  private configuredModel?: Model<any>;
+  private activeModelId?: string;
+  private oxAlphaWasFree?: boolean;
 
   constructor(
     private readonly config: AppConfig,
@@ -144,10 +154,10 @@ export class PiBridge {
       await modelRuntime.setRuntimeApiKey("openrouter", this.config.openRouterApiKey);
     }
 
-    const model = modelRuntime.getModel("openrouter", this.config.openRouterModel);
-    if (!model) {
-      throw new Error(`OpenRouter model not found: ${this.config.openRouterModel}`);
-    }
+    this.fallbackModel = modelRuntime.getModel("openrouter", FALLBACK_MODEL);
+    if (!this.fallbackModel) throw new Error(`OpenRouter fallback model not found: ${FALLBACK_MODEL}`);
+    const model = await this.selectModel(modelRuntime);
+    this.activeModelId = model.id;
 
     const sessionManager =
       request.kind === "open" && request.path
@@ -228,6 +238,12 @@ export class PiBridge {
     if (!this.session) throw new Error("Pi session was not created");
     if (this.isRunning) throw new Error("A Pi turn is already running");
 
+    const model = await this.selectModel();
+    if (model.id !== this.activeModelId) {
+      await this.session.setModel(model);
+      this.activeModelId = model.id;
+    }
+
     if (this.config.executor === "fly") {
       // Boot the sandbox now so it overlaps the LLM call.
       void this.ensureFlyReady().catch(() => {});
@@ -255,6 +271,31 @@ export class PiBridge {
     }
 
     return this.snapshot();
+  }
+
+  private async selectModel(modelRuntime?: ModelRuntime): Promise<Model<any>> {
+    if (this.config.openRouterModel !== OX_ALPHA_MODEL) {
+      if (modelRuntime) {
+        this.configuredModel = modelRuntime.getModel("openrouter", this.config.openRouterModel);
+      }
+      if (!this.configuredModel) {
+        throw new Error(`OpenRouter model not found: ${this.config.openRouterModel}`);
+      }
+      return this.configuredModel;
+    }
+
+    if (!this.fallbackModel) throw new Error(`OpenRouter fallback model not found: ${FALLBACK_MODEL}`);
+    const listing = await confirmFreeOxAlpha();
+    const isFree = Boolean(listing);
+    if (this.oxAlphaWasFree !== isFree) {
+      if (isFree) {
+        console.info("Ox Alpha price check passed: prompt=0, completion=0");
+      } else {
+        console.warn(`Ox Alpha price check failed; using ${FALLBACK_MODEL}`);
+      }
+      this.oxAlphaWasFree = isFree;
+    }
+    return listing ? createOxAlphaModel(this.fallbackModel, listing) : this.fallbackModel;
   }
 
   async cancel(): Promise<AppState> {
@@ -436,7 +477,7 @@ export class PiBridge {
       messages,
       events: this.events,
       isRunning: this.isRunning,
-      model: `openrouter/${this.config.openRouterModel}`,
+      model: `openrouter/${this.activeModelId ?? FALLBACK_MODEL}`,
       tools: ACTIVE_TOOLS,
       toolDefinitions: this.toolSummaries,
       error: this.lastError,
