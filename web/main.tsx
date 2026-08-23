@@ -189,6 +189,22 @@ function App() {
   }, [state.messages, toolActions]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
+  const streamRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const stream = streamRef.current;
+    if (!viewport || !stream) return;
+
+    const followOutput = () => {
+      viewport.scrollTop = viewport.scrollHeight;
+    };
+    const observer = new ResizeObserver(followOutput);
+    observer.observe(stream);
+    followOutput();
+    return () => observer.disconnect();
+  }, [state.session?.path, selectedWorkspace?.id]);
+
   useEffect(() => {
     const el = viewportRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -353,7 +369,7 @@ function App() {
             <section className="thread-panel">
               <ThreadPrimitive.Root className="thread-root">
                 <div className="thread-viewport" ref={viewportRef}>
-                  <div className="thread-stream">
+                  <div className="thread-stream" ref={streamRef}>
                     {timeline.length === 0 ? (
                       <div className="empty-thread">
                         <h2>Ask Pi to work in this workspace.</h2>
