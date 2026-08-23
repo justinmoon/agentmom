@@ -371,7 +371,8 @@ export class PiBridge {
       const message = event.message;
       if (message.role === "user" || message.role === "assistant") {
         const chat = toChatMessage(`live-${message.role}`, message, event.type === "message_update");
-        this.liveMessages.set(chat.id, chat);
+        if (isVisibleChatMessage(chat)) this.liveMessages.set(chat.id, chat);
+        else this.liveMessages.delete(chat.id);
       }
       if (event.type === "message_end" && message.role === "assistant") {
         for (const part of message.content) {
@@ -880,7 +881,8 @@ function sessionMessages(sessionManager: SessionManager): ChatMessage[] {
     .flatMap((entry) => {
       const message = entry.message;
       if (message.role !== "user" && message.role !== "assistant") return [];
-      return [toChatMessage(entry.id, message, false, entry.timestamp)];
+      const chat = toChatMessage(entry.id, message, false, entry.timestamp);
+      return isVisibleChatMessage(chat) ? [chat] : [];
     });
 }
 
@@ -911,7 +913,7 @@ function toChatMessage(
   return {
     id: `${idPrefix}-${message.role}-${createdAt}`,
     role: message.role,
-    content: content || (message.role === "assistant" ? "[tool call]" : ""),
+    content,
     attachments,
     createdAt,
     status: running ? "running" : message.role === "assistant" && message.stopReason === "error" ? "error" : "complete"
@@ -926,13 +928,17 @@ function messageToText(message: PiMessage): string {
   const text = message.content
     .map((part) => {
       if (part.type === "text") return part.text;
-      if (part.type === "toolCall") return `[${part.name}]`;
+      if (part.type === "toolCall") return "";
       return "";
     })
     .filter(Boolean)
     .join("\n");
 
   return message.errorMessage ? `${text}\n${message.errorMessage}`.trim() : text;
+}
+
+function isVisibleChatMessage(message: ChatMessage): boolean {
+  return Boolean(message.content || message.attachments?.length);
 }
 
 function textParts(parts: Array<TextContent | ImageContent>): string {
