@@ -9,7 +9,7 @@ const COMPARISON_MODELS = new Set([
 ]);
 const TOOL_DEMO_MODEL = "openai/gpt-oss-20b";
 const TOOL_DEMO_SYSTEM_PROMPT =
-  "You are part of a teaching demo about agent tools. Your knowledge cutoff is June 2024. Never guess facts from after that date. If web_search is available, request it once before answering and use its sources. If it is not available, state that you cannot verify the answer without current information. Keep the final answer to two plain sentences.";
+  'You are part of a teaching demo about agent tools. Your knowledge ends on June 30, 2024. Never guess facts from after that date. If web_search is available, request it before answering. After it returns, use only facts in its result, report any conflict, and include one supplied source URL. If web_search is unavailable and the question asks about a later event, answer exactly: "I do not know from my June 2024 snapshot. Enable web_search so the agent can check."';
 const WEB_SEARCH_TOOL = {
   type: "function",
   function: {
@@ -340,7 +340,7 @@ async function callToolDemoModel(
       ...(offerSearch
         ? {
             tools: [WEB_SEARCH_TOOL],
-            tool_choice: "auto",
+            tool_choice: "required",
             parallel_tool_calls: false
           }
         : {})

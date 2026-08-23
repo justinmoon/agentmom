@@ -40,6 +40,11 @@ const toolQuickTraceEl = document.querySelector("#tool-quick-trace");
 const toolLoopEventsEl = document.querySelector("#tool-loop-events");
 const toolRawJsonEl = document.querySelector("#tool-raw-json");
 const replayToolsEl = document.querySelector("#replay-tools");
+const toolResultsDialogEl = document.querySelector("#tool-results-dialog");
+const toolResultsTitleEl = document.querySelector("#tool-results-title");
+const toolResultsQueryEl = document.querySelector("#tool-results-query");
+const toolResultsListEl = document.querySelector("#tool-results-list");
+const toolResultTextEl = document.querySelector("#tool-result-text");
 const tabs = [...document.querySelectorAll(".prototype-tab")];
 
 const comparisonPrompts = {
@@ -270,7 +275,7 @@ function toolEventPresentation(event) {
         event.turn === 2
           ? "Original transcript plus the tool result"
           : offered
-            ? "Prompt plus web_search description"
+            ? "Prompt plus required web_search description"
             : "Prompt and transcript; no tools offered",
     };
   }
@@ -322,6 +327,70 @@ function quickToolLabel(event) {
   return null;
 }
 
+function safeHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function showToolResults(event) {
+  const sources = Array.isArray(event.sources) ? event.sources : [];
+  const request = state.toolEvents.find(
+    (candidate) => candidate.type === "model_tool_call" && candidate.toolCallId === event.toolCallId,
+  );
+  const count = sources.length;
+  toolResultsTitleEl.textContent = `${count} source${count === 1 ? "" : "s"} returned`;
+  toolResultsQueryEl.textContent = `Search: ${request?.arguments?.query || "Query unavailable"}`;
+  toolResultsListEl.replaceChildren();
+
+  if (!sources.length) {
+    const empty = document.createElement("p");
+    empty.className = "tool-result-empty";
+    empty.textContent = "The search returned no source records.";
+    toolResultsListEl.append(empty);
+  }
+
+  for (const source of sources) {
+    const article = document.createElement("article");
+    article.className = "tool-result-source";
+    const href = safeHttpUrl(source.url);
+    const title = document.createElement(href ? "a" : "strong");
+    title.textContent = source.title || source.url || "Untitled source";
+    if (href) {
+      title.href = href;
+      title.target = "_blank";
+      title.rel = "noopener noreferrer";
+    }
+    article.append(title);
+
+    if (source.url) {
+      const url = document.createElement("small");
+      url.textContent = source.url;
+      article.append(url);
+    }
+
+    const snippets = Array.isArray(source.snippets) ? source.snippets : [];
+    if (!snippets.length) {
+      const empty = document.createElement("p");
+      empty.textContent = "No snippet returned.";
+      article.append(empty);
+    } else {
+      for (const snippet of snippets) {
+        const text = document.createElement("p");
+        text.textContent = snippet;
+        article.append(text);
+      }
+    }
+    toolResultsListEl.append(article);
+  }
+
+  toolResultTextEl.textContent = event.text || "No text returned.";
+  toolResultsDialogEl.showModal();
+}
+
 function renderToolLoop(limit = state.toolEvents.length) {
   toolLoopEventsEl.replaceChildren();
   const visible = state.toolEvents.slice(0, limit);
@@ -338,13 +407,25 @@ function renderToolLoop(limit = state.toolEvents.length) {
     const item = document.createElement("li");
     item.className = `tool-loop-event actor-${view.actor}`;
 
-    const card = document.createElement("div");
+    const resultCard = event.type === "agent_tool_result";
+    const card = document.createElement(resultCard ? "button" : "div");
     card.className = "tool-event-card";
+    if (resultCard) {
+      card.type = "button";
+      card.classList.add("tool-result-trigger");
+      card.addEventListener("click", () => showToolResults(event));
+    }
     const title = document.createElement("strong");
     title.textContent = view.title;
     const detail = document.createElement("small");
     detail.textContent = view.detail || "";
     card.append(title, detail);
+    if (resultCard) {
+      const action = document.createElement("span");
+      action.className = "tool-event-action";
+      action.textContent = "View results";
+      card.append(action);
+    }
     item.append(card);
     toolLoopEventsEl.append(item);
   }
@@ -360,8 +441,8 @@ function renderToolDemo() {
 
   toolOutcomeTitleEl.textContent = state.toolEvents.length
     ? searchOffered
-      ? "Agent offered web_search"
-      : "Agent offered no tools"
+      ? "Answer grounded with web_search"
+      : "Unverified model answer"
     : "No run yet";
   toolCallCountEl.textContent = `${calls} tool call${calls === 1 ? "" : "s"}`;
   toolAnswerEl.textContent = final?.text || failed?.error || "Run once without search, then tick the box and run again.";
@@ -384,6 +465,7 @@ function renderToolDemo() {
 
 function clearToolDemo() {
   clearToolReplay();
+  if (toolResultsDialogEl.open) toolResultsDialogEl.close();
   state.toolEvents = [];
   toolsErrorEl.hidden = true;
   toolsErrorEl.textContent = "";
@@ -1282,6 +1364,10 @@ webSearchEnabledEl.addEventListener("change", () => {
 });
 
 replayToolsEl.addEventListener("click", replayToolDemo);
+
+toolResultsDialogEl.addEventListener("click", (event) => {
+  if (event.target === toolResultsDialogEl) toolResultsDialogEl.close();
+});
 
 for (const tab of tabs) {
   tab.addEventListener("click", () => {

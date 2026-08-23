@@ -284,13 +284,13 @@
               <small>Knowledge cutoff · June 2024</small>
             </div>
             <label for="tools-question">Question sent to the agent</label>
-            <textarea id="tools-question" rows="3" spellcheck="true">When did congestion pricing begin in Manhattan, and what was the initial daytime toll for most passenger cars?</textarea>
+            <textarea id="tools-question" rows="3" spellcheck="true">Who won the 2026 FIFA World Cup, and whom did they beat in the final?</textarea>
 
             <label class="tool-toggle" for="web-search-enabled">
               <input id="web-search-enabled" type="checkbox" />
               <span>
-                <strong>Let the agent offer <code>web_search</code></strong>
-                <small>The model receives a tool description. The agent keeps the search key and runs the search.</small>
+                <strong>Let the agent enable <code>web_search</code></strong>
+                <small>The model must request the enabled tool. The agent keeps the search key and runs the search.</small>
               </span>
             </label>
 
@@ -339,6 +339,26 @@
         <p id="tools-error" class="request-error" role="alert" hidden></p>
       </section>
     </main>
+
+    <dialog id="tool-results-dialog" class="tool-results-dialog" aria-labelledby="tool-results-title">
+      <div class="tool-results-frame">
+        <header class="tool-results-head">
+          <div>
+            <p class="eyebrow">web_search result</p>
+            <h2 id="tool-results-title">Source context</h2>
+          </div>
+          <form method="dialog">
+            <button class="button secondary" type="submit" aria-label="Close source results">Close</button>
+          </form>
+        </header>
+        <p id="tool-results-query" class="tool-results-query"></p>
+        <div id="tool-results-list" class="tool-results-list"></div>
+        <details class="tool-result-raw">
+          <summary>Exact text returned to the agent</summary>
+          <pre><code id="tool-result-text"></code></pre>
+        </details>
+      </div>
+    </dialog>
 
     <template id="wire-template">
       <div class="wire-view">

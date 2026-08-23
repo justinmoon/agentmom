@@ -606,6 +606,21 @@ h2 {
   box-shadow: 0 4px 14px rgb(44 40 31 / 6%);
 }
 
+.tool-result-trigger {
+  width: 100%;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-result-trigger:hover,
+.tool-result-trigger:focus-visible {
+  border-color: var(--web);
+  outline: 2px solid color-mix(in srgb, var(--web) 45%, transparent);
+  outline-offset: 2px;
+}
+
 .tool-event-card strong,
 .tool-event-card small {
   display: block;
@@ -622,6 +637,14 @@ h2 {
   font-size: 0.7rem;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.tool-event-action {
+  display: inline-block;
+  margin-top: 9px;
+  color: var(--web);
+  font-size: 0.7rem;
+  font-weight: 600;
 }
 
 .tool-loop-event.actor-user .tool-event-card {
@@ -668,6 +691,120 @@ h2 {
   padding: 14px;
   border-top: 1px solid var(--line);
   font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.tool-results-dialog {
+  width: min(760px, calc(100% - 32px));
+  max-height: min(82vh, 850px);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 28%);
+}
+
+.tool-results-dialog::backdrop {
+  background: rgb(20 19 16 / 66%);
+  backdrop-filter: blur(2px);
+}
+
+.tool-results-frame {
+  max-height: min(82vh, 850px);
+  overflow: auto;
+  padding: 24px;
+}
+
+.tool-results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.tool-results-query {
+  margin-top: 18px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.tool-results-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.tool-result-source {
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--web);
+  border-radius: 9px;
+}
+
+.tool-result-source > a,
+.tool-result-source > strong {
+  display: block;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.tool-result-source > a:hover {
+  color: var(--web);
+}
+
+.tool-result-source > small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+}
+
+.tool-result-source > p {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.tool-result-empty {
+  padding: 24px;
+  border: 1px dashed var(--line);
+  border-radius: 9px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.tool-result-raw {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+}
+
+.tool-result-raw summary {
+  padding: 11px 13px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.tool-result-raw pre {
+  max-height: 300px;
+  margin: 0;
+  overflow: auto;
+  padding: 13px;
+  border-top: 1px solid var(--line);
+  font-size: 0.7rem;
   line-height: 1.45;
   white-space: pre-wrap;
 }

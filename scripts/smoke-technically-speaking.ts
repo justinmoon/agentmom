@@ -13,7 +13,7 @@ const upstream = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname === "/search") {
     searchRequests.push(url.searchParams.get("q") ?? "");
-    const sourceUrl = "https://example.com/congestion-pricing";
+    const sourceUrl = "https://www.fifa.com/en/articles/final-tournament-standings";
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({
@@ -21,15 +21,15 @@ const upstream = createServer(async (req, res) => {
           generic: [
             {
               url: sourceUrl,
-              title: "Congestion pricing began January 5, 2025",
-              snippets: ["The program began January 5, 2025 with a $9 daytime toll for most passenger cars."]
+              title: "World Cup 2026: Final tournament standings",
+              snippets: ["Spain won the 2026 FIFA World Cup after beating Argentina 1-0 after extra time in the final."]
             }
           ]
         },
         sources: {
           [sourceUrl]: {
-            title: "Congestion pricing began January 5, 2025",
-            hostname: "example.com"
+            title: "World Cup 2026: Final tournament standings",
+            hostname: "fifa.com"
           }
         }
       })
@@ -54,7 +54,7 @@ const upstream = createServer(async (req, res) => {
               type: "function",
               function: {
                 name: "web_search",
-                arguments: JSON.stringify({ query: "Manhattan congestion pricing start initial daytime toll" })
+                arguments: JSON.stringify({ query: "2026 FIFA World Cup winner final result" })
               }
             }
           ]
@@ -62,7 +62,7 @@ const upstream = createServer(async (req, res) => {
       : toolMessage
         ? {
             role: "assistant",
-            content: "Congestion pricing began January 5, 2025, with a $9 daytime toll for most passenger cars. Source: https://example.com/congestion-pricing"
+            content: "Spain won the 2026 FIFA World Cup, beating Argentina 1-0 after extra time in the final. Source: https://www.fifa.com/en/articles/final-tournament-standings"
           }
         : {
             role: "assistant",
@@ -184,6 +184,7 @@ try {
   assert.match(pageHtml, /How a chat agent works/);
   assert.match(pageHtml, /9\. Tool calls/);
   assert.match(pageHtml, /Who actually searches the web/);
+  assert.match(pageHtml, /tool-results-dialog/);
 
   const config = await fetch(`${baseUrl}/technically-speaking/api/config`, { headers });
   assert.equal(config.status, 200);
@@ -253,8 +254,7 @@ try {
   });
   assert.equal(rejected.status, 400);
 
-  const question =
-    "When did congestion pricing begin in Manhattan, and what was the initial daytime toll for most passenger cars?";
+  const question = "Who won the 2026 FIFA World Cup, and whom did they beat in the final?";
   const withoutSearch = await fetch(`${baseUrl}/technically-speaking/api/tool-demo`, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
@@ -301,12 +301,16 @@ try {
     ]
   );
   assert.equal(receivedRequests[4].tools[0].function.name, "web_search");
+  assert.equal(receivedRequests[4].tool_choice, "required");
   assert.equal(receivedRequests[4].parallel_tool_calls, false);
   assert.equal(receivedRequests[5].tools, undefined);
   assert.equal(receivedRequests[5].messages.some((message: Record<string, unknown>) => message.role === "tool"), true);
   assert.equal(searchRequests.length, 1);
-  assert.match(searchRequests[0], /congestion pricing/);
-  assert.match(withSearchEvents.find((event) => event.type === "agent_user_response").text, /January 5, 2025/);
+  assert.match(searchRequests[0], /World Cup/);
+  const toolResult = withSearchEvents.find((event) => event.type === "agent_tool_result");
+  assert.equal(toolResult.sources.length, 1);
+  assert.match(toolResult.sources[0].snippets[0], /Spain/);
+  assert.match(withSearchEvents.find((event) => event.type === "agent_user_response").text, /Argentina/);
   assert.deepEqual(withSearchEvents.at(-1), {
     at: withSearchEvents.at(-1).at,
     type: "done",
