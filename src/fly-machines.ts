@@ -112,7 +112,7 @@ export class FlySandbox {
     }
 
     const bootstrap = `curl -fsSL ${this.config.fly.shimUrl} -o /tmp/agentmom-shim.mjs && exec node /tmp/agentmom-shim.mjs`;
-    const machine = await this.api("POST", `/apps/${this.appName}/machines`, {
+    const machineConfig = {
       name: "sandbox",
       region: this.config.fly.region,
       config: {
@@ -140,7 +140,20 @@ export class FlySandbox {
         restart: { policy: "always" },
         auto_destroy: false
       }
-    });
+    };
+    let machine: { id?: string } | undefined;
+    let machineError: unknown;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try {
+        machine = await this.api("POST", `/apps/${this.appName}/machines`, machineConfig);
+        break;
+      } catch (error) {
+        machineError = error;
+        if (!/-> 404:/.test(String(error)) || attempt === 9) throw error;
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
+      }
+    }
+    if (!machine) throw machineError;
     this.machineId = machine.id as string;
     this.provisioned = true;
   }
@@ -160,18 +173,25 @@ export class FlySandbox {
       return;
     }
 
-    await this.api("POST", `/apps/${this.appName}/machines/${this.machineId}/start`, {}).catch((error) => {
+    const requestStart = () => this.api("POST", `/apps/${this.appName}/machines/${this.machineId}/start`, {}).catch((error) => {
       // Freshly created machines boot on their own ("created"/"starting"),
       // and racing wakes hit "already started" — all fine, we poll the shim.
-      if (!/already started|not stopped|current state/i.test(String(error))) throw error;
+      if (!/already started|not stopped|current state|stopping/i.test(String(error))) throw error;
     });
+    await requestStart();
 
     const deadline = Date.now() + 90_000;
+    let lastStartAttempt = Date.now();
     while (Date.now() < deadline) {
       if (await this.shimHealthy(2000)) {
         this.up = true;
         this.markActivity();
         return;
+      }
+      if (Date.now() - lastStartAttempt >= 2_000) {
+        const state = await this.machineState();
+        if (state === "stopped" || state === "suspended") await requestStart();
+        lastStartAttempt = Date.now();
       }
       await new Promise((r) => setTimeout(r, 250));
     }
@@ -222,13 +242,14 @@ export class FlySandbox {
   }
 
   createBashExec(): FlyExec {
-    return async (command, _cwd, options) => {
+    return async (command, cwd, options) => {
       this.markActivity();
       await this.ensureStarted();
+      const guestCwd = this.hostToGuest(cwd) ?? cwd;
 
       const response = await this.shimFetch("/exec", {
         method: "POST",
-        body: JSON.stringify({ command, cwd: this.guestWorkspace, timeout: options.timeout }),
+        body: JSON.stringify({ command, cwd: guestCwd, timeout: options.timeout }),
         timeoutMs: (options.timeout ?? 600_000) + 30_000,
         signal: options.signal
       });

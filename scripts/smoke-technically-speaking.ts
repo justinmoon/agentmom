@@ -190,6 +190,7 @@ try {
   assert.match(pageHtml, /Who actually searches the web/);
   assert.match(pageHtml, /tool-results-dialog/);
   assert.match(pageHtml, /tool-wire-dialog/);
+  assert.match(pageHtml, /One more tool makes this coding/);
 
   const config = await fetch(`${baseUrl}/technically-speaking/api/config`, { headers });
   assert.equal(config.status, 200);
